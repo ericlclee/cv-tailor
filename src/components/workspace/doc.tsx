@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { cx } from "../ui";
 
@@ -28,18 +27,24 @@ export function DocBody({ children, wide }: { children: ReactNode; wide?: boolea
   );
 }
 
-export function Tabs({ base, active, tabs }: { base: string; active: string; tabs: { key: string; label: string }[] }) {
+/** Tabs that switch in the browser; the links still work for opening a tab in a new window. */
+export function Tabs<K extends string>({ base, active, tabs, onSelect }: { base: string; active: K; tabs: { key: K; label: string }[]; onSelect: (key: K) => void }) {
   return (
     <nav aria-label="Application views" className="flex gap-0.5 rounded-[10px] bg-paper p-[3px]">
       {tabs.map((t) => (
-        <Link
+        <a
           key={t.key}
           href={t.key === tabs[0].key ? base : `${base}?tab=${t.key}`}
+          onClick={(e) => {
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+            e.preventDefault();
+            onSelect(t.key);
+          }}
           aria-current={active === t.key ? "page" : undefined}
           className={cx("rounded-lg px-3.5 py-2 text-sm", active === t.key ? "bg-surface font-semibold shadow-[0_1px_2px_rgba(14,17,22,0.08)]" : "font-medium text-ink-2 hover:text-ink")}
         >
           {t.label}
-        </Link>
+        </a>
       ))}
     </nav>
   );

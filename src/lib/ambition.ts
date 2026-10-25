@@ -10,16 +10,16 @@ export const AMBITION: { level: Ambition; name: string; line: string; setting: s
   {
     level: 0,
     name: "Faithful",
-    line: "Says what your profile says",
-    setting: "Your profile, reworded for this job. No new facts, numbers or scope.",
-    writer: "Reword for clarity and the job's terms only. Keep every fact, number, scope and role exactly as the profile states it.",
+    line: "Same facts as your profile, rewritten for the job",
+    setting: "Rewritten for this job, but every fact, number and scope stays exactly as your profile has it.",
+    writer: "Rewrite freely for this job, but keep every fact, number, scope and role exactly as the profile states it.",
   },
   {
     level: 1,
     name: "Polished",
     line: "Stronger wording, same facts",
     setting: "Confident, active wording and ownership verbs. The facts and numbers stay as they are.",
-    writer: "Confident, active wording, with ownership verbs (Led, Owned, Built) for work the user drove. Keep the numbers as given, tidying rough estimates into clean figures.",
+    writer: "Rewrite with confident, active wording and ownership verbs (Led, Owned, Built) for work the user drove. Keep the numbers as given, tidying rough estimates into clean figures.",
   },
   {
     level: 2,

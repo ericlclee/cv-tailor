@@ -122,6 +122,30 @@ export function rateCv(content: CvContent, m: Master): CvRating {
   return { bullets, summary, skills };
 }
 
+const words = (t: string) => normalize(t).split(/\s+/).filter((w) => w.length > 2);
+
+/**
+ * Bullets that read as a copy of the profile rather than a rewrite for the job: nearly
+ * all their words come from one source and they're about as long as it.
+ */
+export function nearCopies(content: CvContent, m: Master) {
+  const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a.text] as const)));
+  const out: { bulletId: string; text: string }[] = [];
+  for (const s of content.sections)
+    for (const i of s.items)
+      for (const b of i.bullets) {
+        if (!b.include || b.sourceIds.length !== 1) continue;
+        const src = achievements.get(b.sourceIds[0]);
+        if (!src) continue;
+        const bw = words(b.text);
+        const sw = new Set(words(src));
+        const shared = bw.filter((w) => sw.has(w)).length / Math.max(bw.length, 1);
+        const ratio = bw.length / Math.max(sw.size, 1);
+        if (shared >= 0.8 && ratio > 0.7) out.push({ bulletId: b.id, text: b.text });
+      }
+  return out;
+}
+
 export const UNLINKED_WARNING = "Not linked to your profile. Be ready to back this up in an interview.";
 
 /** Flag included bullets whose numbers don't appear in their sources. */

@@ -10,6 +10,7 @@ import { CLOSED_STATUSES, TRACK, type AppStatus, type CvBullet, type CvDraft, ty
 import { toast, toastError } from "../toast";
 import { Button, Spinner, Textarea, cx } from "../ui";
 import { copyText } from "./activity-panel";
+import type { AppTab } from "./application-view";
 import { DocBar, DocBody, DocPanel, SectionLabel, Tabs } from "./doc";
 
 type App = Required<Pick<Job, "events" | "notes" | "unclaimed">> & Job & { parsed: NonNullable<Job["parsed"]>; status: AppStatus; ambition: Ambition };
@@ -21,7 +22,7 @@ interface AppData {
   rating: CvRating | null;
 }
 
-export function ApplicationDocument({ id, tab, role }: { id: string; tab: string; role: string }) {
+export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab: AppTab; role: string; onTab: (tab: AppTab) => void }) {
   const [data, setData] = useState<AppData | null>(null);
   const [missing, setMissing] = useState(false);
   const load = useCallback(() => {
@@ -39,6 +40,7 @@ export function ApplicationDocument({ id, tab, role }: { id: string; tab: string
         <Tabs
           base={`/apps/${id}`}
           active={tab}
+          onSelect={onTab}
           tabs={[
             { key: "match", label: "Match" },
             { key: "cv", label: "CV" },

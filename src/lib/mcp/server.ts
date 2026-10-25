@@ -12,7 +12,7 @@ import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount } from "../requirements";
 import { profileStrength } from "../strength";
-import { buildCvFromPlan, flagNumbers, rateCv, UNLINKED_WARNING } from "../tailor";
+import { buildCvFromPlan, flagNumbers, nearCopies, rateCv, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
@@ -41,7 +41,13 @@ Rate every bullet and the summary you write on the same 0–3 scale (0 same fact
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
 Every CV bullet must cite the achievement ids it is based on.
 
-Writing: one-sentence achievements with a strong past-tense verb (present tense for current roles), what they did and the result, no first person.
+Writing the CV (at every level): the master profile is the factual record, written to be complete; the CV is a new document written for this one job. Never copy achievement text across.
+- Start from what the job values most (its responsibilities and must-haves). Choose and order bullets by relevance to it, not by the profile's order.
+- Re-summarise each bullet in your own words: one tight line of about 15–25 words, a strong verb first (past tense, present for current roles), then what was done and the result. Drop tool lists, internal names and detail this job doesn't care about.
+- Combine related achievements into one bullet, or split a dense one, citing every source id.
+- Use the job's vocabulary for the same thing, and lead with the outcome where there is one.
+- The summary is 2–3 sentences pitched at this role, not a recap of the latest job. Order and name skills the way the job does.
+Ambition controls which facts may change, never whether to rewrite: a Faithful bullet still reads freshly written for this job. The server flags bullets that are near-copies of the profile; rewrite them with edit_cv.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
@@ -489,7 +495,7 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and reword them for the job; titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
         headline: z.string().describe("Short professional headline aimed at this job"),
@@ -531,6 +537,7 @@ export function createMcpServer() {
       await saveJob(job);
 
       const warnings = cvWarnings(content, job.unclaimed);
+      const copied = nearCopies(content, m);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition);
       const report = keywordReport(cvPlainText(content), job.parsed);
       const bullets = content.sections.flatMap((s) => (s.include ? s.items.flatMap((x) => (x.include ? x.bullets.filter((b) => b.include) : [])) : [])).length;
@@ -546,12 +553,13 @@ export function createMcpServer() {
         keywordCoverage: `${report.score}%`,
         missingMustHaves: report.mustHaveMissing,
         ambition,
+        copiedFromProfile: copied.length ? copied : undefined,
         warnings,
         skillsToPrepare: unbackedSkills.length ? `${unbackedSkills.join(", ")} (kept on the CV, but no achievement shows them yet)` : undefined,
         unknownEntryIds: unknown.length ? unknown : undefined,
         cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: `${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
+        tellTheUser: `${copied.length ? `${copied.length} bullet${copied.length > 1 ? "s read" : " reads"} like the profile's own wording: rewrite ${copied.length > 1 ? "them" : "it"} for this job with edit_cv before showing the user. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -615,7 +623,8 @@ export function createMcpServer() {
       if (i.summary !== undefined) details.push({ label: "Summary", before: cv.content.summary, after: i.summary });
       if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
       await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
-      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      const copied = nearCopies(content, m);
+      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

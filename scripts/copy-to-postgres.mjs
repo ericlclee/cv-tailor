@@ -3,7 +3,7 @@
 // Existing rows with the same ids are overwritten; nothing is deleted.
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import postgres from "postgres";
+import pg from "pg";
 
 const url = process.env.DATABASE_URL;
 if (!url) {
@@ -13,28 +13,31 @@ if (!url) {
 const file = path.resolve(process.env.DATABASE_PATH ?? "data/cv-tailor.db");
 const local = new DatabaseSync(file, { readOnly: true });
 const isLocalPg = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
-const sql = postgres(url, { prepare: false, ssl: isLocalPg ? false : "require", onnotice: () => {} });
+// SSL settings in the URL would override the ssl option, so they're removed (as in src/lib/db.ts).
+const connectionString = url.replace(/([?&])(sslmode|ssl|sslrootcert|uselibpqcompat)=[^&]*&?/g, "$1").replace(/[?&]$/, "");
+const sql = new pg.Client({ connectionString, ssl: isLocalPg ? false : { rejectUnauthorized: false } });
+await sql.connect();
 const collections = ["entries", "jobs", "cvs", "suggestions", "activity"];
 
-await sql.unsafe("CREATE SCHEMA IF NOT EXISTS cv_tailor");
+await sql.query("CREATE SCHEMA IF NOT EXISTS cv_tailor");
 for (const c of collections) {
-  await sql.unsafe(`CREATE TABLE IF NOT EXISTS cv_tailor.${c} (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
+  await sql.query(`CREATE TABLE IF NOT EXISTS cv_tailor.${c} (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())`);
 }
-await sql.unsafe("CREATE TABLE IF NOT EXISTS cv_tailor.kv (key text PRIMARY KEY, value jsonb NOT NULL)");
+await sql.query("CREATE TABLE IF NOT EXISTS cv_tailor.kv (key text PRIMARY KEY, value jsonb NOT NULL)");
 
 const has = (t) => local.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(t);
 for (const c of collections) {
   if (!has(c)) continue;
   const rows = local.prepare(`SELECT id, data, created_at FROM ${c}`).all();
   for (const r of rows) {
-    await sql.unsafe(`INSERT INTO cv_tailor.${c} (id, data, created_at) VALUES ($1, $2::jsonb, $3) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`, [r.id, JSON.parse(r.data), r.created_at]);
+    await sql.query(`INSERT INTO cv_tailor.${c} (id, data, created_at) VALUES ($1, $2::jsonb, $3) ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data`, [r.id, r.data, r.created_at]);
   }
   console.log(`${c}: ${rows.length}`);
 }
 if (has("kv")) {
   const rows = local.prepare("SELECT key, value FROM kv").all();
   for (const r of rows) {
-    await sql.unsafe("INSERT INTO cv_tailor.kv (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [r.key, JSON.parse(r.value)]);
+    await sql.query("INSERT INTO cv_tailor.kv (key, value) VALUES ($1, $2::jsonb) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [r.key, r.value]);
   }
   console.log(`settings: ${rows.length}`);
 }

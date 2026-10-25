@@ -14,7 +14,6 @@ CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
 - **Master profile as an evidence bank.** Every role, project and achievement is stored once and reused for every job. Your chat asks questions to fill gaps: missing numbers, thin roles, skills you list but never show.
 - **Requirement-to-evidence matching.** Paste a job link (Greenhouse, Lever, Ashby, Workday, most career pages) or the description. Each requirement shows the achievements that prove it, or a gap to talk through.
 - **Ambition levels.** For each application you choose how far the CV goes beyond your profile: **Faithful** (your profile, reworded), **Polished** (stronger wording, same facts), **Elevated** (ownership of work you drove, broader scope, numbers rounded in your favour) or **Bold** (stronger figures and outcomes you could argue in an interview). Your chat writes to that level and rates every line it writes. The CV tab highlights each line by its rating, with a legend, and outlines any line above the level you chose. Highlights never appear in the PDF or DOCX.
-- **The CV inside your chat.** In Claude and Claude Desktop (and other apps that support [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)), a saved CV appears right in the conversation with its highlights and legend. Pick a different ambition level there, press **Redraft**, or click any line to make it stronger, tone it down or rewrite it: the button sends the request into the chat and Claude does it straight away.
 - **Checks on every CV.** CV Tailor checks the CV before saving:
   - titles, employers and dates always come from your profile;
   - numbers and bullets that go beyond your profile are flagged, so you can prepare to back them up in an interview;
@@ -142,7 +141,6 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 | `mark_not_claimed` | Requirements you don't have; the CV never claims them |
 | `save_cv` | Save a CV your chat wrote. Every bullet cites achievement ids and carries an ambition rating |
 | `edit_cv` | Replace, remove or add bullets; change headline or summary |
-| `show_cv` | Show the CV inside the chat (MCP App), with the ambition picker and redraft buttons |
 | `update_application` | Stage changes, dated timeline events, notes, and the CV's ambition level |
 
 **Checks on every CV** (`src/lib/tailor.ts`). They flag lines to prepare for; they don't block anything:
@@ -160,8 +158,7 @@ The warnings go back to your chat and appear in the CV view.
 src/lib/mcp/server.ts   MCP tools and the instructions sent to your chat
 src/app/mcp/route.ts    Streamable HTTP endpoint (stateless) with localhost / token access checks
 src/lib/activity.ts     Change log with snapshot-based undo
-src/lib/tailor.ts       Turns a CV plan into CV content, rates each line's ambition and flags near-copies
-src/mcp-app/view.ts     The in-chat CV view (MCP App), bundled into one HTML file by scripts/build-mcp-app.mjs
+src/lib/tailor.ts       Turns a CV plan into CV content and checks it against the evidence
 src/lib/requirements.ts Links each job requirement to the achievements that prove it
 src/lib/applications.ts Status, timeline and notes
 src/lib/db.ts           Small JSON document store: Postgres/Supabase (DATABASE_URL) or a local SQLite file

@@ -13,8 +13,6 @@ import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords
 import { analyzeRequirements, backedCount } from "../requirements";
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, flagNumbers, nearCopies, rateCv, UNLINKED_WARNING } from "../tailor";
-import { toCvViewData, type CvViewData } from "../cv-view-data";
-import { CV_VIEW_HTML } from "./app-html.generated";
 import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
@@ -51,16 +49,12 @@ Writing the CV (at every level): the master profile is the factual record, writt
 - The summary is 2–3 sentences pitched at this role, not a recap of the latest job. Order and name skills the way the job does.
 Ambition controls which facts may change, never whether to rewrite: a Faithful bullet still reads freshly written for this job. The server flags bullets that are near-copies of the profile; rewrite them with edit_cv.
 
-In chat apps that support MCP Apps, save_cv, edit_cv and show_cv also display the CV inside the conversation, with its ambition highlights, the level picker and buttons. Those buttons send ordinary user messages (for example "Redraft my CV for … at the Elevated ambition level"); act on them like any other request. Call show_cv when the user wants to see their CV.
-
 Keep chat replies short and point the user to the web app to see and download results.`;
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const json = (v: unknown) => text(JSON.stringify(v, null, 1));
 // Coerced: some chat clients send numbers as strings.
 const ambitionLevel = z.coerce.number().int().min(0).max(3);
-/** A JSON result plus the data the in-chat CV view renders. */
-const withView = (cvView: CvViewData, v: unknown) => ({ ...json(v), structuredContent: { cvView } });
 const fail = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
 
 function appLink(id: string, tab?: "cv" | "timeline") {
@@ -118,50 +112,10 @@ function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition) 
 
 const ambitionSetting = (l: Ambition) => ({ level: l, name: ambitionName(l), howToWrite: AMBITION[l].writer });
 
-// The in-chat CV view (an MCP App, built from src/mcp-app). Hosts that support MCP
-// Apps render it for tools that carry this _meta; others just get the text result.
-const CV_VIEW_URI = "ui://cv-tailor/cv-view.html";
-const CV_VIEW_MIME = "text/html;profile=mcp-app";
-const CV_VIEW_META = { ui: { resourceUri: CV_VIEW_URI }, "ui/resourceUri": CV_VIEW_URI };
-
-const roleOf = (job: { parsed: { title: string; company: string } }) => [job.parsed.title, job.parsed.company && `at ${job.parsed.company}`].filter(Boolean).join(" ") || "this job";
-
-async function cvViewFor(job: { id: string; parsed: { title: string; company: string }; ambition: Ambition; cvId: string | null }) {
-  const [cv, m] = await Promise.all([job.cvId ? get("cvs", job.cvId) : null, getMaster()]);
-  return toCvViewData({ applicationId: job.id, role: roleOf(job), ambition: job.ambition, cv, rating: cv ? rateCv(cv.content, m) : null, appUrl: appUrl() });
-}
-
 const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
 
 export function createMcpServer() {
   const server = new McpServer({ name: "cv-tailor", version: "1.0.0" }, { instructions: INSTRUCTIONS });
-
-  server.registerResource(
-    "cv-view",
-    CV_VIEW_URI,
-    { title: "CV view", description: "Shows an application's CV in the chat with ambition highlights, the level picker and redraft buttons.", mimeType: CV_VIEW_MIME },
-    async () => ({ contents: [{ uri: CV_VIEW_URI, mimeType: CV_VIEW_MIME, text: CV_VIEW_HTML }] }),
-  );
-
-  server.registerTool(
-    "show_cv",
-    {
-      title: "Show CV",
-      description: "Show an application's CV inside the chat, with each line highlighted by its ambition, the ambition picker, and buttons to redraft or rewrite lines. Use it when the user wants to see or review their CV.",
-      inputSchema: { application_id: z.string() },
-      annotations: { readOnlyHint: true },
-      _meta: CV_VIEW_META,
-    },
-    async ({ application_id }) => {
-      const job = await needApp(application_id);
-      const cvView = await cvViewFor(job);
-      const lines = cvView.cv ? cvView.cv.sections.flatMap((s) => s.items.flatMap((i) => i.bullets)).length : 0;
-      return {
-        ...text(cvView.cv ? `Showing the CV for ${cvView.role}: ${lines} lines at the ${ambitionName(job.ambition)} level. Web app: ${cvView.links.app}` : `${cvView.role} has no CV yet. Its ambition level is ${ambitionName(job.ambition)}.`),
-        structuredContent: { cvView },
-      };
-    },
-  );
 
   // -------------------------------------------------------------------------
   // Reading
@@ -541,7 +495,6 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      _meta: CV_VIEW_META,
       description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
@@ -594,7 +547,7 @@ export function createMcpServer() {
         appId: job.id,
         details: [{ label: "CV", after: `${bullets} bullets at ${ambition.chosen} · ${report.matched.length} of ${report.matched.length + report.missing.length} job keywords${warnings.length ? ` · ${warnings.length} to check` : ""}` }],
       });
-      return withView(await cvViewFor(job), {
+      return json({
         saved: true,
         bullets,
         keywordCoverage: `${report.score}%`,
@@ -615,7 +568,6 @@ export function createMcpServer() {
     "edit_cv",
     {
       title: "Edit CV",
-      _meta: CV_VIEW_META,
       description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted.",
       inputSchema: {
         application_id: z.string(),
@@ -672,7 +624,7 @@ export function createMcpServer() {
       if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
       await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
       const copied = nearCopies(content, m);
-      return withView(await cvViewFor(job), { saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

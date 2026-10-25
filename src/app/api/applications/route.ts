@@ -2,7 +2,6 @@ import { z } from "zod";
 import { tracker } from "@/lib/activity";
 import { createApplication, listApplications } from "@/lib/applications";
 import { getMaster } from "@/lib/db";
-import { passwordRequired } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 import { fetchJob } from "@/lib/jobs";
 import { profileStrength } from "@/lib/strength";
@@ -10,7 +9,7 @@ import { profileStrength } from "@/lib/strength";
 // Everything the sidebar needs.
 export const GET = handler(async () => {
   const [m, apps] = await Promise.all([getMaster(), listApplications()]);
-  return { profile: { name: m.profile.name, strength: profileStrength(m), started: m.entries.length > 0 }, apps, locked: passwordRequired() };
+  return { profile: { name: m.profile.name, strength: profileStrength(m), started: m.entries.length > 0 }, apps };
 });
 
 const body = z.object({ url: z.string().default(""), description: z.string().default("") });

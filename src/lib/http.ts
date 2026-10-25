@@ -1,6 +1,7 @@
 import "server-only";
 import { ZodError } from "zod";
 import { AIError } from "./ai";
+import { SignInRequired } from "./session";
 
 export class HttpError extends Error {
   constructor(
@@ -18,7 +19,7 @@ export function handler<A extends unknown[]>(fn: (...args: A) => Promise<unknown
       const out = await fn(...args);
       return out instanceof Response ? out : Response.json(out ?? { ok: true });
     } catch (err) {
-      if (err instanceof HttpError || err instanceof AIError) {
+      if (err instanceof HttpError || err instanceof AIError || err instanceof SignInRequired) {
         return Response.json({ error: err.message }, { status: err.status });
       }
       if (err instanceof ZodError) {

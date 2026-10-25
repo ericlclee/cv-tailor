@@ -112,7 +112,30 @@ Hosting it means your chat can reach it from anywhere, including claude.ai on th
    - **claude.ai** (web and mobile): Settings › Connectors › Add custom connector, URL `https://<your-app>.vercel.app/mcp?key=<your MCP_TOKEN>`.
    - **ChatGPT:** Settings › Connectors (developer mode), same URL.
 
-**Security.** This is a one-person setup. Anyone with the password can use the web app, and anyone with the token can read and change your data through the MCP endpoint. Keep both secret; to revoke access, change them in Vercel and redeploy. Changing the password signs every browser out. The token sits in the connector URL for apps that only accept a URL, so treat that URL like a password.
+**Security (single user).** Anyone with the password can use the web app, and anyone with the token can read and change your data through the MCP endpoint. Keep both secret; to revoke access, change them in Vercel and redeploy. Changing the password signs every browser out. The token sits in the connector URL for apps that only accept a URL, so treat that URL like a password.
+
+### Accounts: invite other people
+
+With Google sign-in configured, CV Tailor becomes invite-only and multi-user: everyone signs in with Google, gets their own profile, applications and CVs, and connects their own chat app with their own key. Until it's configured, the app keeps running as a single user (above).
+
+1. **Create a Google OAuth client.** In [Google Cloud Console](https://console.cloud.google.com/apis/credentials): create a project, set up the OAuth consent screen (External; app name "CV Tailor"; add your email as a test user while it's in testing, or publish it), then **Create credentials › OAuth client ID › Web application**. Add these **Authorized redirect URIs**:
+   - `https://<your-app>.vercel.app/api/auth/google/callback`
+   - `http://localhost:3000/api/auth/google/callback` (for local development)
+2. **Set these in Vercel**, then redeploy:
+
+   | Variable | Value |
+   |---|---|
+   | `GOOGLE_CLIENT_ID` | from the OAuth client |
+   | `GOOGLE_CLIENT_SECRET` | from the OAuth client |
+   | `SESSION_SECRET` | a long random secret for signing sign-in cookies: `openssl rand -hex 32` |
+   | `OWNER_EMAIL` | your Google email: you can always sign in, and you manage invites |
+
+   `APP_PASSWORD` is no longer used once these are set. Keep `MCP_TOKEN`: it carries on working as your key, so existing chat connections don't break.
+3. **Sign in** with your Google account. Everything created before accounts were turned on moves to your account.
+4. **Invite people** from **People and invites** (bottom of the sidebar): create a link, optionally locked to one Google email, and send it. Links work once and last 14 days. You can remove people there too, which deletes their data.
+5. **Each person connects their own chat**: Activity › How to connect a chat app › **Make my key**. The key is shown once, already filled into the connector address. Making a new key replaces the old one.
+
+Each person only ever sees their own data, in the web app and through their key.
 
 **Running a local model instead** (LM Studio, or Ollama through an MCP-capable client like Open WebUI): point its MCP settings at the same URL. Small models are weaker at multi-step tool use, but the evidence checks still apply.
 
@@ -156,19 +179,22 @@ The warnings go back to your chat and appear in the CV view.
 
 ```
 src/lib/mcp/server.ts   MCP tools and the instructions sent to your chat
-src/app/mcp/route.ts    Streamable HTTP endpoint (stateless) with localhost / token access checks
+src/app/mcp/route.ts    Streamable HTTP endpoint (stateless); runs each request as the key's user
 src/lib/activity.ts     Change log with snapshot-based undo
 src/lib/tailor.ts       Turns a CV plan into CV content and checks it against the evidence
 src/lib/requirements.ts Links each job requirement to the achievements that prove it
 src/lib/applications.ts Status, timeline and notes
-src/lib/db.ts           Small JSON document store: Postgres/Supabase (DATABASE_URL) or a local SQLite file
-src/proxy.ts            Password gate for the web app (APP_PASSWORD)
+src/lib/db.ts           Small JSON document store, scoped per user: Postgres/Supabase (DATABASE_URL) or a local SQLite file
+src/proxy.ts            Sign-in gate: Google accounts, or the single-user APP_PASSWORD
+src/lib/session.ts      Who a request belongs to: signed cookies, and the MCP key's user
+src/lib/users.ts        Invite-only sign-in, invites and per-user MCP keys
+src/lib/google.ts       Google sign-in (OpenID Connect with PKCE)
 src/components/workspace/  Sidebar, documents (profile, match, CV, timeline) and the activity panel
 ```
 
 ## Roadmap
 
-- Accounts and per-user storage, to host it for other people (today it is one person per deployment).
+- Email or magic-link sign-in as an alternative to Google.
 - A cover letter tool, using the same evidence rules.
 - Interview practice that draws on your evidence and records new stories it uncovers.
 

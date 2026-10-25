@@ -134,7 +134,7 @@ export function ActivityPanel({ scope, context, prompts }: { scope: string | nul
         ))}
       </div>
 
-      <div className="border-t border-line-soft px-5 pt-3 pb-4">
+      <div className="border-t border-line-soft px-5 pt-3 pb-4 lg:max-h-[55%] lg:shrink-0 lg:overflow-y-auto">
         {!empty && prompts.length > 0 && (
           <div className="mb-3 flex flex-col gap-1.5">
             <p className="text-xs font-medium text-muted">Try asking your chat</p>
@@ -225,7 +225,104 @@ function ConnectGuide({ prompts }: { prompts: string[] }) {
   );
 }
 
+interface Me {
+  accounts: boolean;
+  mcpKeyCreatedAt: string | null;
+}
+
 function Setup() {
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    api<Me>("/api/me").then(setMe).catch(() => {});
+  }, []);
+  if (me?.accounts) return <KeySetup createdAt={me.mcpKeyCreatedAt} />;
+  return <SharedTokenSetup />;
+}
+
+/** With accounts, each person connects with their own key, shown once when made. */
+function KeySetup({ createdAt }: { createdAt: string | null }) {
+  const origin = useOrigin();
+  const [key, setKey] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const url = `${origin}/mcp?key=${key ?? "<your key>"}`;
+  const config = `{
+  "mcpServers": {
+    "cv-tailor": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "${url}"]
+    }
+  }
+}`;
+  const cmd = `claude mcp add --transport http cv-tailor "${url}"`;
+
+  async function make() {
+    if (createdAt && !key && !confirm("Make a new key? Chat apps using your old key will stop working until you update them.")) return;
+    setBusy(true);
+    try {
+      setKey((await api<{ key: string }>("/api/me/mcp-key", { method: "POST" })).key);
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-3 text-sm">
+      <div className="flex flex-col gap-2 rounded-lg bg-paper px-3 py-2.5">
+        <p className="font-medium">Your connection key</p>
+        {key ? (
+          <>
+            <p className="leading-relaxed text-ink-2">Copy it now: it&apos;s only shown once. Anyone with it can read and change your CV Tailor data.</p>
+            <code className="rounded-md bg-surface p-2.5 font-mono text-xs break-all">{url}</code>
+            <button type="button" onClick={() => copyText(url, "Address copied")} className="min-h-9 self-start rounded-lg border border-control bg-surface px-3 text-[13px] font-medium hover:border-muted">
+              Copy address
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="leading-relaxed text-ink-2">
+              {createdAt
+                ? `You made a key on ${new Date(createdAt).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}. Keys are only shown once; make a new one if you need it again.`
+                : "Make a key to connect your chat app to your own CV Tailor data."}
+            </p>
+            <button type="button" disabled={busy} onClick={make} className="min-h-9 self-start rounded-lg bg-ink px-3 text-[13px] font-medium text-white disabled:opacity-60">
+              {createdAt ? "Make a new key" : "Make my key"}
+            </button>
+          </>
+        )}
+      </div>
+      <details open className="rounded-lg bg-paper px-3 py-2.5">
+        <summary className="cursor-pointer font-medium">Claude (web and desktop), ChatGPT and other apps</summary>
+        <p className="mt-2 leading-relaxed text-ink-2">
+          Add a custom connector with the address above. In Claude: Settings › Connectors › Add custom connector. In ChatGPT: Settings › Connectors (developer mode).
+        </p>
+      </details>
+      <details className="rounded-lg bg-paper px-3 py-2.5">
+        <summary className="cursor-pointer font-medium">Claude Desktop config file</summary>
+        <p className="mt-2 leading-relaxed text-ink-2">Settings › Developer › Edit Config, add this, then restart Claude Desktop. Needs Node.js.</p>
+        <pre className="mt-2 overflow-x-auto rounded-md bg-surface p-2.5 font-mono text-xs leading-relaxed">{config}</pre>
+        {key && (
+          <button type="button" onClick={() => copyText(config, "Config copied")} className="mt-2 min-h-9 rounded-lg border border-control bg-surface px-3 text-[13px] font-medium hover:border-muted">
+            Copy config
+          </button>
+        )}
+      </details>
+      <details className="rounded-lg bg-paper px-3 py-2.5">
+        <summary className="cursor-pointer font-medium">Claude Code</summary>
+        <pre className="mt-2 overflow-x-auto rounded-md bg-surface p-2.5 font-mono text-xs">{cmd}</pre>
+        {key && (
+          <button type="button" onClick={() => copyText(cmd, "Command copied")} className="mt-2 min-h-9 rounded-lg border border-control bg-surface px-3 text-[13px] font-medium hover:border-muted">
+            Copy command
+          </button>
+        )}
+      </details>
+    </div>
+  );
+}
+
+/** Single-user mode: one shared MCP_TOKEN (or none, locally). */
+function SharedTokenSetup() {
   const origin = useOrigin();
   const local = isLocal(origin);
   const config = desktopConfig(origin);

@@ -241,3 +241,30 @@ export interface Activity {
   /** The state of everything this change touched, before it ran. Restored on undo. */
   snapshots: Snapshot[];
 }
+
+// ---------------------------------------------------------------------------
+// Accounts (when Google sign-in is configured; see session.ts and users.ts)
+
+export interface User {
+  id: string;
+  email: string;
+  name: string;
+  picture: string;
+  role: "owner" | "member";
+  /** sha256 of the user's MCP key; the key itself is shown once, when created. */
+  mcpKeyHash?: string;
+  mcpKeyCreatedAt?: string;
+  createdAt: string;
+  lastSignInAt: string;
+}
+
+/** An invitation to join. The id is the code in the invite link. */
+export interface Invite {
+  id: string;
+  /** If set, only this Google account can use the invite. */
+  email: string;
+  createdAt: string;
+  expiresAt: string;
+  usedBy?: string;
+  usedAt?: string;
+}

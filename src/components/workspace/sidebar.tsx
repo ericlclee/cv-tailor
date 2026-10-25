@@ -22,8 +22,12 @@ interface AppRow {
 interface SidebarData {
   profile: { name: string; strength: number; started: boolean };
   apps: AppRow[];
-  /** A password protects the app, so offer to sign out. */
-  locked: boolean;
+}
+
+interface Me {
+  accounts: boolean;
+  user: { name: string; email: string; picture: string; role: "owner" | "member" } | null;
+  canSignOut: boolean;
 }
 
 function shortDate(iso: string) {
@@ -87,32 +91,63 @@ export function Sidebar() {
       {closed.length > 0 && <AppGroup label="Closed" apps={closed} path={path} />}
 
       <span className="flex-1" />
-      {data?.locked && (
-        <button
-          type="button"
-          onClick={async () => {
-            await fetch("/api/logout", { method: "POST" });
-            router.replace("/login");
-          }}
-          className="min-h-9 self-start px-3 text-[13px] font-medium text-muted hover:text-ink"
-        >
-          Sign out
-        </button>
-      )}
-      {data?.profile.name && (
-        <div className="flex items-center gap-2.5 p-2">
-          <span aria-hidden="true" className="grid size-8 place-items-center rounded-full bg-ink text-[13px] font-semibold text-white">
-            {data.profile.name
-              .split(/\s+/)
-              .map((p) => p[0])
-              .slice(0, 2)
-              .join("")
-              .toUpperCase()}
+      <Account path={path} fallbackName={data?.profile.name ?? ""} onSignOut={() => router.replace("/login")} />
+    </aside>
+  );
+}
+
+/** Who's signed in, with Admin (owner) and Sign out. In single-user mode, just the profile name. */
+function Account({ path, fallbackName, onSignOut }: { path: string; fallbackName: string; onSignOut: () => void }) {
+  const [me, setMe] = useState<Me | null>(null);
+  useEffect(() => {
+    api<Me>("/api/me").then(setMe).catch(() => {});
+  }, []);
+  const name = me?.user?.name || fallbackName;
+  const initials = name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  if (!me || (!name && !me.canSignOut)) return null;
+  return (
+    <div className="flex flex-col gap-1 border-t border-line-soft pt-3">
+      {name && (
+        <div className="flex items-center gap-2.5 px-2 py-1">
+          {me.user?.picture ? (
+            // eslint-disable-next-line @next/next/no-img-element -- a small Google avatar; no need for the image optimiser
+            <img src={me.user.picture} alt="" referrerPolicy="no-referrer" className="size-8 rounded-full" />
+          ) : (
+            <span aria-hidden="true" className="grid size-8 place-items-center rounded-full bg-ink text-[13px] font-semibold text-white">
+              {initials}
+            </span>
+          )}
+          <span className="flex min-w-0 flex-col">
+            <span className="truncate text-sm font-medium">{name}</span>
+            {me.user?.email && <span className="truncate text-xs text-muted">{me.user.email}</span>}
           </span>
-          <span className="text-sm font-medium">{data.profile.name}</span>
         </div>
       )}
-    </aside>
+      <div className="flex gap-1">
+        {me.user?.role === "owner" && (
+          <Link href="/admin" aria-current={path === "/admin" ? "page" : undefined} className="flex min-h-9 items-center rounded-lg px-3 text-[13px] font-medium text-muted hover:text-ink">
+            People and invites
+          </Link>
+        )}
+        {me.canSignOut && (
+          <button
+            type="button"
+            onClick={async () => {
+              await fetch("/api/logout", { method: "POST" });
+              onSignOut();
+            }}
+            className="min-h-9 px-3 text-[13px] font-medium text-muted hover:text-ink"
+          >
+            Sign out
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 

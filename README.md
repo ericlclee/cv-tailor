@@ -1,9 +1,41 @@
 # CV Tailor
 
-Keep an honest record of your career, tailor an ATS-friendly CV for every job, and track each application, **by talking to your own AI chat**. CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
+Keep an honest record of your career, tailor an ATS-friendly CV for every job, and track each application, **by talking to your own AI chat**.
 
-- **Your chat app** (Claude Desktop, Claude Code, ChatGPT…) does the thinking and writing, on your own plan. No API key needed.
-- **CV Tailor** stores your profile and applications, reads job links, checks every CV line against your evidence, and shows everything live in the browser, where you edit, undo and download PDF/DOCX.
+CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
+
+- **Your chat app** (Claude Desktop, Claude Code, claude.ai, ChatGPT…) does the thinking and writing, on your own plan. No AI API key needed.
+- **CV Tailor** stores your profile and applications, reads job links, checks every CV line against your evidence, and shows everything live in the browser. There you can edit, undo, and download PDF or DOCX.
+
+![The CV view: a tailored CV in the middle, applications on the left, and the activity feed of changes made from the chat on the right](docs/cv.png)
+
+## Features
+
+- **Master profile as an evidence bank.** Every role, project and achievement is stored once and reused for every job. Your chat asks questions to fill gaps: missing numbers, thin roles, skills you list but never show.
+- **Requirement-to-evidence matching.** Paste a job link (Greenhouse, Lever, Ashby, Workday, most career pages) or the description. Each requirement shows the achievements that prove it, or a gap to talk through.
+- **Honest CVs.** Your chat writes the CV, and CV Tailor checks it before saving:
+  - titles, employers and dates always come from your profile;
+  - numbers that aren't in the cited evidence are flagged;
+  - bullets with no evidence are flagged;
+  - skills your profile doesn't show are dropped;
+  - requirements you said you lack are never claimed.
+- **ATS-friendly export.** A single-column layout with standard headings and real text, as PDF or DOCX.
+- **Application tracking.** A stage for each job (Saved → CV → Applied → Interview → Offer), with a dated timeline and notes, kept up to date from your chat.
+- **Live activity feed with undo.** Every change your chat makes appears in the browser within seconds and can be undone.
+
+![The match view: each job requirement with the evidence behind it](docs/match.png)
+
+## How it works
+
+```
+Your chat app ──MCP──▶ /mcp (10 tools) ──▶ database ◀── web app (profile, match, CV, timeline, activity)
+```
+
+1. You talk to your chat as usual. It calls CV Tailor's tools to read your profile and jobs, and to save changes.
+2. CV Tailor checks and stores everything, and records each change with what it replaced, so it can be undone.
+3. The web app shows it all live, and is where you review, edit and download.
+
+**Built with** Next.js 16, TypeScript, Tailwind CSS 4, the MCP TypeScript SDK, and Postgres/Supabase or SQLite. PDFs are made with pdfkit and Word files with docx.
 
 ## Run it locally
 
@@ -134,8 +166,12 @@ src/proxy.ts            Password gate for the web app (APP_PASSWORD)
 src/components/workspace/  Sidebar, documents (profile, match, CV, timeline) and the activity panel
 ```
 
-## Next steps
+## Roadmap
 
 - Accounts and per-user storage, to host it for other people (today it is one person per deployment).
-- Prompt caching friendliness: tool results are compact, but long profiles are resent often.
 - A cover letter tool, using the same evidence rules.
+- Interview practice that draws on your evidence and records new stories it uncovers.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

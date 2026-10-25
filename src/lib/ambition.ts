@@ -7,7 +7,8 @@ export type Ambition = 0 | 1 | 2 | 3;
 export const DEFAULT_AMBITION: Ambition = 2;
 
 // The master profile is the plain factual record. Every level reframes it for the job;
-// the levels differ in how far the framing may stretch the facts.
+// the levels differ in how far past the facts the framing goes, up to Bold: the CV a
+// model candidate for the role would have, built on the user's real background.
 export const AMBITION: { level: Ambition; name: string; line: string; setting: string; writer: string }[] = [
   {
     level: 0,
@@ -19,23 +20,23 @@ export const AMBITION: { level: Ambition; name: string; line: string; setting: s
   {
     level: 1,
     name: "Polished",
-    line: "Ownership and impact framing, same facts",
-    setting: "Claims the work you drove, leads with impact, and states scope at the level it mattered. Numbers stay as they are, tidied into clean figures.",
-    writer: "Claim the work the user drove as theirs (Led, Owned, Built, Delivered), lead with the impact, and state scope at the level it mattered (team, product, client, business). Keep the numbers, tidied into clean figures.",
+    line: "Numbers pushed up, natural responsibilities added",
+    setting: "Already stretches: numbers pushed up to impressive round figures, and the responsibilities that naturally come with your work (ownership, stakeholders, process, mentoring) claimed outright.",
+    writer: "Push numbers up to impressive round figures. Claim the responsibilities that naturally come with the user's work (ownership, stakeholder management, process, mentoring, decisions) even where the profile doesn't spell them out. Make every line sound accomplished.",
   },
   {
     level: 2,
     name: "Elevated",
-    line: "Senior framing: broader scope, rounded-up numbers",
-    setting: "Presents you a level more senior: ownership of team results you were central to, business-level scope and impact, numbers rounded up, adjacent experience mapped onto every requirement.",
-    writer: "Present the user a level more senior. Claim ownership of team results they were central to; describe scope and impact at the business level; round numbers up generously; state the impact the profile clearly implies even where it isn't measured; map adjacent experience onto every requirement the job lists, in its exact terms.",
+    line: "A level more senior: bigger scope and numbers",
+    setting: "Presents you a clear level more senior: bigger numbers, business-level scope and outcomes, leadership of initiatives you took part in, and adjacent experience and skills mapped onto every requirement.",
+    writer: "Present the user a clear level more senior. Inflate numbers and scope meaningfully; claim team and business outcomes and leadership of initiatives they took part in; state impact the work plausibly had; map adjacent experience and lightly used skills onto every requirement the job lists, in its exact terms.",
   },
   {
     level: 3,
     name: "Bold",
-    line: "Claims or figures beyond your profile",
-    setting: "Everything in Elevated, plus stronger figures, outcomes and scope you could argue in an interview, and skills you've used only lightly listed as working skills.",
-    writer: "Everything in Elevated, plus stronger figures, outcomes and scope the user could argue in an interview, and skills they've used only lightly listed as working skills. Keep every figure plausible for the role and company size.",
+    line: "Model candidate: written for the ideal hire",
+    setting: "The CV a model candidate for this role would have, built on your real roles and the kind of work you do: every requirement covered with a convincing achievement, at the figures and responsibilities the role expects.",
+    writer: "Write the CV of a model candidate for this role, built on the user's real roles and the kind of work they actually do. Cover every requirement with a convincing achievement; use the figures, scope and responsibilities the role expects of a strong hire; list every skill the job asks for that the user's work touches. Each line should still grow out of something the user did, so they can talk around it in an interview.",
   },
 ];
 

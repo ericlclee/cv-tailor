@@ -100,8 +100,8 @@ export function buildCvFromPlan(m: Master, out: CvPlan) {
 
 /**
  * Rate every line of a CV. The writer's own rating is the starting point, raised to what
- * the checks can see: a line with no source is Bold, and a number the sources don't
- * contain makes a line at least Elevated. Skills no achievement shows are Bold.
+ * the checks can see: a line with no source is Bold, a number the sources don't contain
+ * makes a line at least Polished, and skills no achievement shows are Elevated.
  */
 export function rateCv(content: CvContent, m: Master): CvRating {
   const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a.text] as const)));
@@ -111,14 +111,14 @@ export function rateCv(content: CvContent, m: Master): CvRating {
   for (const s of content.sections)
     for (const i of s.items)
       for (const b of i.bullets) {
-        const floor = !b.sourceIds.length ? 3 : unsupportedNumbers(b.text, b.sourceIds.map((id) => achievements.get(id) ?? "")).length ? 2 : 0;
+        const floor = !b.sourceIds.length ? 3 : unsupportedNumbers(b.text, b.sourceIds.map((id) => achievements.get(id) ?? "")).length ? 1 : 0;
         bullets[b.id] = raise(b.ambition, floor);
       }
-  const summary = raise(content.summaryAmbition, unsupportedNumbers(content.summary, allText).length ? 2 : 0);
+  const summary = raise(content.summaryAmbition, unsupportedNumbers(content.summary, allText).length ? 1 : 0);
   const known = new Set(m.skills.map((s) => normalize(s.name).trim()));
   const evidence = normalize(m.entries.flatMap((e) => e.achievements.flatMap((a) => [a.text, ...a.skills])).join(" "));
   const skills: CvRating["skills"] = {};
-  for (const item of content.skills.flatMap((g) => g.items)) if (!known.has(normalize(item).trim()) && !evidence.includes(normalize(item))) skills[item] = 3;
+  for (const item of content.skills.flatMap((g) => g.items)) if (!known.has(normalize(item).trim()) && !evidence.includes(normalize(item))) skills[item] = 2;
   return { bullets, summary, skills };
 }
 

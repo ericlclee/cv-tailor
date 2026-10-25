@@ -37,7 +37,7 @@ Workflow:
 
 Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level and never above it unless the user asks.
 ${AMBITION.map((a) => `- ${a.level} ${a.name}: ${a.writer}`).join("\n")}
-Rate every bullet and the summary you write on the same 0–3 scale (0 same facts as its sources, 1 stronger wording, 2 broader scope or ownership or rounded numbers, 3 a figure, outcome or claim the profile doesn't contain). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up, and the server raises a rating it can see is too low.
+Rate every bullet and the summary you write on the same 0–3 scale (0 the profile's facts, reframed; 1 numbers pushed up or natural responsibilities added; 2 a clearly more senior version: inflated scope or numbers, initiatives led, adjacent skills; 3 model-candidate content: achievements, figures or responsibilities written for the ideal hire). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up, and the server raises a rating it can see is too low.
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
 Every CV bullet must cite the achievement ids it is based on.
 

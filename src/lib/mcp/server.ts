@@ -1,0 +1,640 @@
+import "server-only";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { tracker } from "../activity";
+import { addEvent, changeStatus, createApplication, getApplication, listApplications, saveJob, STATUS_LABEL } from "../applications";
+import { masterForPrompt, refreshSuggestions } from "../coach";
+import { applyEdits, prepareEdits } from "../cv-edits";
+import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills } from "../db";
+import { entryKind, extractMetrics, toAchievement, toEntry } from "../entries";
+import { fetchJob } from "../jobs";
+import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
+import { analyzeRequirements, backedCount } from "../requirements";
+import { profileStrength } from "../strength";
+import { buildCvFromPlan, flagNumbers } from "../tailor";
+import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
+
+// The CV Tailor MCP server. The user's own chat model does the thinking and
+// writing; these tools read and change the data, check CVs against the
+// evidence, and record every change in the activity feed (with undo).
+
+/** Where the web app lives, for links in tool results: APP_URL, else Vercel's production address, else localhost. */
+export const appUrl = () => {
+  const vercel = process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL;
+  return (process.env.APP_URL || (vercel ? `https://${vercel}` : "http://localhost:3000")).replace(/\/$/, "");
+};
+
+const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into honest, ATS-friendly CVs. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
+
+Workflow:
+1. Start with get_overview. If the profile is empty, ask the user for their CV (they can attach it to the chat) and record it with update_profile.
+2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
+3. When the user shares a job (link or text), call create_application, then read the description and call set_job_details with the real requirements.
+4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile. If not, call mark_not_claimed.
+5. Write the CV yourself and save it with save_cv. Then refine it with edit_cv when the user asks.
+6. Keep the application current with update_application (applied, interview dates, outcome, notes).
+
+Honesty rules (most important):
+- Use only facts the user told you or that are already in their profile. Never invent or inflate numbers, tools, scope, titles or outcomes. Keep estimates as estimates ("about 30%").
+- Every CV bullet must cite the achievement ids it is based on. The server flags numbers that aren't in the cited sources and drops skills the profile doesn't show.
+- Never claim a requirement the user said they don't have.
+
+Writing: one-sentence achievements with a strong past-tense verb (present tense for current roles), what they did and the result, no first person. Mirror the job's exact terms where they are true.
+
+Keep chat replies short and point the user to the web app to see and download results.`;
+
+const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
+const json = (v: unknown) => text(JSON.stringify(v, null, 1));
+const fail = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
+
+function appLink(id: string, tab?: "cv" | "timeline") {
+  return `${appUrl()}/apps/${id}${tab ? `?tab=${tab}` : ""}`;
+}
+
+async function needApp(id: string) {
+  const job = await getApplication(id);
+  if (!job) throw new Error(`No application with id "${id}". Call get_overview to see the ids.`);
+  return job;
+}
+
+/** Plain view of a CV with the ids the edit tools need. */
+function cvView(content: CvContent) {
+  return {
+    headline: content.header.headline,
+    summary: content.summary,
+    skills: content.skills,
+    sections: content.sections
+      .filter((s) => s.include)
+      .map((s) => ({
+        title: s.title,
+        items: s.items
+          .filter((i) => i.include)
+          .map((i) => ({
+            itemId: i.id,
+            role: [i.title, i.organization].filter(Boolean).join(", "),
+            dates: i.dates,
+            bullets: i.bullets.filter((b) => b.include).map((b) => ({ bulletId: b.id, text: b.text, sourceIds: b.sourceIds, ...(b.warning ? { warning: b.warning } : {}) })),
+          })),
+      })),
+  };
+}
+
+function cvWarnings(content: CvContent, unclaimed: string[]) {
+  const out: { bulletId: string; text: string; warning: string }[] = [];
+  const all = content.sections.flatMap((s) => (s.include ? s.items.flatMap((i) => (i.include ? i.bullets.filter((b) => b.include) : [])) : []));
+  for (const b of all) if (b.warning) out.push({ bulletId: b.id, text: b.text, warning: b.warning });
+  const plain = normalize(cvPlainText(content));
+  for (const u of unclaimed) {
+    if (containsTerm(plain, u)) out.push({ bulletId: "", text: u, warning: `The CV mentions "${u}", which the user said they don't have.` });
+  }
+  return out;
+}
+
+const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
+
+export function createMcpServer() {
+  const server = new McpServer({ name: "cv-tailor", version: "1.0.0" }, { instructions: INSTRUCTIONS });
+
+  // -------------------------------------------------------------------------
+  // Reading
+
+  server.registerTool(
+    "get_overview",
+    {
+      title: "Get overview",
+      description: "Start here. Returns the profile's strength, the open questions that would strengthen it, every application with its status and id, and the web app link.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const m = await getMaster();
+      return json({
+        webApp: appUrl(),
+        profile: {
+          name: m.profile.name,
+          strength: `${profileStrength(m)}/100`,
+          entries: m.entries.length,
+          achievements: m.entries.reduce((n, e) => n + e.achievements.length, 0),
+          skills: m.skills.length,
+        },
+        questionsToStrengthenProfile: m.entries.length ? (await refreshSuggestions()).slice(0, 8).map((s) => ({ question: s.question, why: s.reason })) : ["The profile is empty. Ask the user for their CV or their most recent role."],
+        applications: (await listApplications()).map((a) => ({ id: a.id, role: a.title, company: a.company, status: STATUS_LABEL[a.status], link: appLink(a.id) })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "get_profile",
+    {
+      title: "Get master profile",
+      description: "The full master profile: contact details, skills, and every entry (role, project, education…) with its achievements and their ids. Use the ids with update_profile and save_cv.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      const m = await getMaster();
+      const { links, ...contact } = m.profile;
+      return text(`<contact>\n${JSON.stringify({ ...contact, links }, null, 1)}\n</contact>\n\n<profile>\n${masterForPrompt(m)}\n</profile>`);
+    },
+  );
+
+  server.registerTool(
+    "get_application",
+    {
+      title: "Get application",
+      description:
+        "One application: the job's details, each requirement with the achievements that prove it (proven, weak, gap, or not claimed), the current CV with bullet and item ids, the timeline, notes, and links to view and download.",
+      inputSchema: { application_id: z.string() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ application_id }) => {
+      const job = await needApp(application_id);
+      const m = await getMaster();
+      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
+      const cv = job.cvId ? await get("cvs", job.cvId) : null;
+      return json({
+        id: job.id,
+        status: STATUS_LABEL[job.status],
+        job: job.parsed,
+        source: job.url || "pasted description",
+        requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
+        notClaimed: job.unclaimed,
+        cv: cv ? { ...cvView(cv.content), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
+        timeline: job.events.map((e) => ({ at: e.at, title: e.title, detail: e.detail })),
+        notes: job.notes,
+        links: { view: appLink(job.id), cv: appLink(job.id, "cv"), ...(cv ? { pdf: `${appUrl()}/api/cvs/${cv.id}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cv.id}/export?format=docx` } : {}) },
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Profile
+
+  const newAchievement = z.object({ text: z.string(), skills: z.array(z.string()).optional().describe("Skills, tools or methods this shows") });
+  server.registerTool(
+    "update_profile",
+    {
+      title: "Update master profile",
+      description:
+        "Change the master profile: contact details, entries (roles, projects, education…), achievements and skills. Use it to record an imported CV, answers to questions, or corrections. Only record facts the user gave you. Dates are YYYY-MM or YYYY. Every change can be undone in the web app.",
+      inputSchema: {
+        summary: z.string().describe("A few words describing the change, shown in the activity feed, e.g. 'Added hackathon to Brightcart'"),
+        contact: z
+          .object({
+            name: z.string().optional(),
+            headline: z.string().optional(),
+            email: z.string().optional(),
+            phone: z.string().optional(),
+            location: z.string().optional(),
+            summary: z.string().optional(),
+            links: z.array(z.object({ label: z.string(), url: z.string() })).optional(),
+          })
+          .optional(),
+        addEntries: z
+          .array(
+            z.object({
+              kind: entryKind,
+              title: z.string(),
+              organization: z.string().optional(),
+              location: z.string().optional(),
+              startDate: z.string().optional(),
+              endDate: z.string().optional(),
+              current: z.boolean().optional(),
+              description: z.string().optional(),
+              url: z.string().optional(),
+              achievements: z.array(newAchievement).optional(),
+            }),
+          )
+          .optional(),
+        updateEntries: z
+          .array(
+            z.object({
+              entryId: z.string(),
+              title: z.string().optional(),
+              organization: z.string().optional(),
+              location: z.string().optional(),
+              startDate: z.string().optional(),
+              endDate: z.string().optional(),
+              current: z.boolean().optional(),
+              description: z.string().optional(),
+            }),
+          )
+          .optional(),
+        removeEntryIds: z.array(z.string()).optional(),
+        addAchievements: z.array(newAchievement.extend({ entryId: z.string() })).optional(),
+        updateAchievements: z.array(z.object({ achievementId: z.string(), text: z.string().optional(), skills: z.array(z.string()).optional() })).optional(),
+        removeAchievementIds: z.array(z.string()).optional(),
+        addSkills: z.array(z.object({ name: z.string(), category: z.string().optional() })).optional(),
+        removeSkills: z.array(z.string()).optional().describe("Skill names"),
+      },
+      annotations: { destructiveHint: false },
+    },
+    async (input) => {
+      const t = tracker();
+      const details: ActivityDetail[] = [];
+      const problems: string[] = [];
+      const m = await getMaster();
+      const entries = new Map(m.entries.map((e) => [e.id, structuredClone(e)]));
+      const touched = new Set<string>();
+      const findAch = (id: string) => {
+        for (const e of entries.values()) {
+          const a = e.achievements.find((x) => x.id === id);
+          if (a) return { e, a };
+        }
+        return null;
+      };
+
+      if (input.contact && Object.values(input.contact).some((v) => v !== undefined)) {
+        await t.kv("profile");
+        const p = { ...await getProfile() };
+        for (const [k, v] of Object.entries(input.contact)) if (v !== undefined) (p as Record<string, unknown>)[k] = v;
+        await setProfile(p);
+        details.push({ label: "Contact details", after: [p.name, p.headline, p.email, p.location].filter(Boolean).join(" · ") });
+      }
+      for (const u of input.updateEntries ?? []) {
+        const e = entries.get(u.entryId);
+        if (!e) {
+          problems.push(`No entry ${u.entryId}`);
+          continue;
+        }
+        const before = entryLabel(e);
+        Object.assign(e, Object.fromEntries(Object.entries(u).filter(([k, v]) => k !== "entryId" && v !== undefined)));
+        touched.add(e.id);
+        details.push({ label: "Updated entry", before, after: entryLabel(e) });
+      }
+      for (const n of input.addAchievements ?? []) {
+        const e = entries.get(n.entryId);
+        if (!e) {
+          problems.push(`No entry ${n.entryId} for "${n.text}"`);
+          continue;
+        }
+        e.achievements.push(toAchievement({ text: n.text, skills: n.skills ?? [], metrics: [] }));
+        touched.add(e.id);
+        details.push({ label: `Added to ${entryLabel(e)}`, after: n.text });
+      }
+      for (const u of input.updateAchievements ?? []) {
+        const hit = findAch(u.achievementId);
+        if (!hit) {
+          problems.push(`No achievement ${u.achievementId}`);
+          continue;
+        }
+        const before = hit.a.text;
+        if (u.text !== undefined) {
+          hit.a.text = u.text;
+          hit.a.metrics = extractMetrics(u.text);
+        }
+        if (u.skills) hit.a.skills = u.skills;
+        touched.add(hit.e.id);
+        details.push({ label: `Updated in ${entryLabel(hit.e)}`, before, after: hit.a.text });
+      }
+      for (const id of input.removeAchievementIds ?? []) {
+        const hit = findAch(id);
+        if (!hit) {
+          problems.push(`No achievement ${id}`);
+          continue;
+        }
+        hit.e.achievements = hit.e.achievements.filter((a) => a.id !== id);
+        touched.add(hit.e.id);
+        details.push({ label: `Removed from ${entryLabel(hit.e)}`, before: hit.a.text });
+      }
+      for (const id of touched) {
+        await t.doc("entries", id);
+        await put("entries", { ...entries.get(id)!, updatedAt: new Date().toISOString() });
+      }
+      for (const id of input.removeEntryIds ?? []) {
+        const e = await get("entries", id);
+        if (!e) {
+          problems.push(`No entry ${id}`);
+          continue;
+        }
+        await t.doc("entries", id);
+        await remove("entries", id);
+        details.push({ label: "Removed entry", before: entryLabel(e) });
+      }
+      for (const ne of input.addEntries ?? []) {
+        const id = newId();
+        await t.doc("entries", id);
+        const entry = toEntry({ ...ne, id, sort: 0, achievements: (ne.achievements ?? []).map((a) => ({ text: a.text, skills: a.skills ?? [], metrics: [] })) });
+        await put("entries", entry);
+        details.push({ label: `New ${ne.kind}`, after: [entryLabel(entry), ...entry.achievements.map((a) => `• ${a.text}`)].join("\n") });
+      }
+      if (input.addSkills?.length || input.removeSkills?.length) {
+        await t.kv("skills");
+        const drop = new Set((input.removeSkills ?? []).map((s) => s.toLowerCase()));
+        const skills = (await getSkills()).filter((s) => !drop.has(s.name.toLowerCase()));
+        const names = new Set(skills.map((s) => s.name.toLowerCase()));
+        const added: string[] = [];
+        for (const s of input.addSkills ?? []) {
+          if (!names.has(s.name.toLowerCase())) {
+            names.add(s.name.toLowerCase());
+            skills.push({ id: newId(), name: s.name, category: s.category ?? "" });
+            added.push(s.name);
+          }
+        }
+        await setSkills(skills);
+        if (added.length) details.push({ label: "Skills added", after: added.join(", ") });
+        if (drop.size) details.push({ label: "Skills removed", before: [...drop].join(", ") });
+      }
+
+      if (!details.length) return fail(`Nothing changed. ${problems.join("; ")}`);
+      await t.record({ kind: "profile", summary: input.summary, details });
+      const after = await getMaster();
+      return json({
+        saved: true,
+        changes: details.length,
+        problems,
+        strength: `${profileStrength(after)}/100`,
+        nextQuestions: (await refreshSuggestions()).slice(0, 3).map((s) => s.question),
+        seeIt: appUrl(),
+      });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Applications
+
+  server.registerTool(
+    "create_application",
+    {
+      title: "Create application",
+      description:
+        "Start tracking a job. Give a link (Greenhouse, Lever, Ashby, Workday and most career pages are read automatically; LinkedIn and Indeed usually block it) or paste the full description. Returns the job text so you can extract the real requirements and call set_job_details.",
+      inputSchema: {
+        url: z.string().optional().describe("Link to the job listing"),
+        description: z.string().optional().describe("The full job description, if there's no link or the link can't be read"),
+      },
+    },
+    async ({ url, description }) => {
+      if (!url && !description?.trim()) return fail("Give a link or the job description.");
+      let input: Parameters<typeof createApplication>[0];
+      if (description?.trim()) {
+        input = { text: description, url: url ?? "", source: url ? "Pasted" : "Pasted" };
+      } else {
+        try {
+          const f = await fetchJob(url!);
+          input = { text: f.text, url, source: f.source, hints: f.hints };
+        } catch (err) {
+          return fail(`${err instanceof Error ? err.message : "Couldn't read that link."} Ask the user to paste the description, then call create_application with it.`);
+        }
+      }
+      const job = await createApplication(input);
+      const t = tracker();
+      await t.doc("jobs", job.id);
+      // The "before" of a new application is nothing, so undo removes it.
+      await t.record({ kind: "application", summary: `Started an application: ${[job.parsed?.title, job.parsed?.company].filter(Boolean).join(" at ") || "new job"}`, appId: job.id });
+      return json({
+        applicationId: job.id,
+        link: appLink(job.id),
+        firstGuess: job.parsed,
+        nextStep: "Read the description below and call set_job_details with the actual title, company and requirements (short ATS terms, using the job's exact spelling). The first guess above is a rough keyword match.",
+        description: job.rawText.slice(0, 15000),
+      });
+    },
+  );
+
+  server.registerTool(
+    "set_job_details",
+    {
+      title: "Set job details",
+      description:
+        "Record what the job asks for, as you read it from the description. mustHave and niceToHave are short ATS terms (1–4 words, the job's exact spelling, e.g. 'Python', 'stakeholder management'). These drive the requirement-to-evidence match.",
+      inputSchema: {
+        application_id: z.string(),
+        title: z.string(),
+        company: z.string(),
+        location: z.string().optional(),
+        seniority: z.string().optional(),
+        summary: z.string().optional().describe("Two sentences on what the role is about"),
+        mustHave: z.array(z.string()),
+        niceToHave: z.array(z.string()).optional(),
+        keywords: z.array(z.string()).optional().describe("Other terms an ATS would scan for"),
+        responsibilities: z.array(z.string()).optional(),
+        yearsExperience: z.string().optional().describe("e.g. '5+ years', or empty"),
+        education: z.string().optional(),
+      },
+    },
+    async (i) => {
+      const job = await needApp(i.application_id);
+      const t = tracker();
+      await t.doc("jobs", job.id);
+      job.parsed = {
+        title: i.title,
+        company: i.company,
+        location: i.location ?? "",
+        seniority: i.seniority ?? "",
+        summary: i.summary ?? "",
+        mustHave: i.mustHave,
+        niceToHave: i.niceToHave ?? [],
+        keywords: i.keywords ?? [],
+        responsibilities: i.responsibilities ?? [],
+        yearsExperience: i.yearsExperience ?? "",
+        education: i.education ?? "",
+      };
+      await saveJob(job);
+      await t.record({ kind: "job", summary: `Read the requirements for ${i.title}`, appId: job.id, details: [{ label: "Must have", after: i.mustHave.join(", ") }, ...(i.niceToHave?.length ? [{ label: "Nice to have", after: i.niceToHave.join(", ") }] : [])] });
+      const m = await getMaster();
+      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
+      return json({
+        saved: true,
+        backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
+        gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
+        weak: reqs.filter((r) => r.state === "weak").map((r) => r.name),
+        nextStep: "Ask the user about each gap, one at a time. Add evidence with update_profile, or call mark_not_claimed if they don't have it.",
+        link: appLink(job.id),
+      });
+    },
+  );
+
+  server.registerTool(
+    "mark_not_claimed",
+    {
+      title: "Mark requirements as not claimed",
+      description: "Record requirements the user doesn't have, so the CV never claims them.",
+      inputSchema: { application_id: z.string(), requirements: z.array(z.string()) },
+    },
+    async ({ application_id, requirements }) => {
+      const job = await needApp(application_id);
+      const t = tracker();
+      await t.doc("jobs", job.id);
+      const have = new Set(job.unclaimed.map((u) => u.toLowerCase()));
+      job.unclaimed = [...job.unclaimed, ...requirements.filter((r) => !have.has(r.toLowerCase()))];
+      await saveJob(job);
+      await t.record({ kind: "job", summary: `Won't claim: ${requirements.join(", ")}`, appId: job.id });
+      return text(`Noted. The CV won't claim ${requirements.join(", ")}.`);
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // CVs
+
+  server.registerTool(
+    "save_cv",
+    {
+      title: "Save tailored CV",
+      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). You choose which entries and achievements to use and reword them for the job; titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources, drops skills the profile doesn't show, and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      inputSchema: {
+        application_id: z.string(),
+        headline: z.string().describe("Short professional headline, truthful to the profile"),
+        summary: z.string().describe("2–4 sentence summary aimed at this job, no first person"),
+        skills: z.array(z.object({ category: z.string(), items: z.array(z.string()) })),
+        sectionOrder: z.array(entryKind).describe("Usually experience first; projects or education first for students and career changers"),
+        entries: z.array(
+          z.object({
+            entryId: z.string(),
+            include: z.boolean().optional().describe("false hides the entry"),
+            bullets: z.array(z.object({ text: z.string(), sourceIds: z.array(z.string()).describe("Achievement ids this bullet is based on") })),
+          }),
+        ),
+      },
+    },
+    async (i) => {
+      const job = await needApp(i.application_id);
+      const m = await getMaster();
+      if (!m.entries.length) return fail("The master profile is empty. Build it first with update_profile.");
+      const unknown = i.entries.filter((e) => !m.entries.some((x) => x.id === e.entryId)).map((e) => e.entryId);
+      const { content, removedSkills } = buildCvFromPlan(m, { ...i, entries: i.entries.map((e) => ({ ...e, include: e.include ?? true })) });
+
+      const t = tracker();
+      const existing = job.cvId ? await get("cvs", job.cvId) : null;
+      const cvId = existing?.id ?? newId();
+      await t.doc("cvs", cvId);
+      await t.doc("jobs", job.id);
+      const now = new Date().toISOString();
+      await put("cvs", { id: cvId, jobId: job.id, name: [job.parsed.title, job.parsed.company].filter(Boolean).join(" · ") || "Tailored CV", content, notes: [], createdAt: existing?.createdAt ?? now, updatedAt: now });
+      job.cvId = cvId;
+      if (job.status === "saved") changeStatus(job, "cv", "Written in your chat and checked against your evidence.");
+      await saveJob(job);
+
+      const warnings = cvWarnings(content, job.unclaimed);
+      const report = keywordReport(cvPlainText(content), job.parsed);
+      const bullets = content.sections.flatMap((s) => (s.include ? s.items.flatMap((x) => (x.include ? x.bullets.filter((b) => b.include) : [])) : [])).length;
+      await t.record({
+        kind: "cv",
+        summary: existing ? "Rewrote the CV" : "Drafted the CV",
+        appId: job.id,
+        details: [{ label: "CV", after: `${bullets} bullets · ${report.matched.length} of ${report.matched.length + report.missing.length} job keywords${warnings.length ? ` · ${warnings.length} to check` : ""}` }],
+      });
+      return json({
+        saved: true,
+        bullets,
+        keywordCoverage: `${report.score}%`,
+        missingMustHaves: report.mustHaveMissing,
+        warnings,
+        droppedSkills: removedSkills.length ? `${removedSkills.join(", ")} (not shown anywhere in the profile)` : undefined,
+        unknownEntryIds: unknown.length ? unknown : undefined,
+        cv: cvView(content),
+        links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
+        tellTheUser: warnings.length ? "Mention the flagged lines and ask whether they're accurate." : "Point them to the CV tab to review and download.",
+      });
+    },
+  );
+
+  server.registerTool(
+    "edit_cv",
+    {
+      title: "Edit CV",
+      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds for new or rewritten bullets so they can be checked.",
+      inputSchema: {
+        application_id: z.string(),
+        summary_of_change: z.string().describe("A few words for the activity feed, e.g. 'Shortened Brightcart'"),
+        headline: z.string().optional(),
+        summary: z.string().optional(),
+        edits: z
+          .array(
+            z.object({
+              op: z.enum(["replace", "remove", "add"]),
+              bulletId: z.string().optional().describe("For replace and remove"),
+              itemId: z.string().optional().describe("For add: the CV item (role) id"),
+              text: z.string().optional(),
+              sourceIds: z.array(z.string()).optional(),
+            }),
+          )
+          .optional(),
+      },
+    },
+    async (i) => {
+      const job = await needApp(i.application_id);
+      const cv = job.cvId ? await get("cvs", job.cvId) : null;
+      if (!cv) return fail("This application has no CV yet. Write one with save_cv.");
+      const edits = prepareEdits(cv.content, (i.edits ?? []).map((e) => ({ op: e.op, bulletId: e.bulletId, itemId: e.itemId, text: e.text })));
+      if (!edits.length && i.headline === undefined && i.summary === undefined) return fail("None of those edits matched bullets or items in the CV. Check the ids with get_application.");
+
+      const t = tracker();
+      await t.doc("cvs", cv.id);
+      let content = applyEdits(cv.content, edits);
+      // Attach sources to rewritten or added bullets, then re-check numbers.
+      const sourcesByText = new Map((i.edits ?? []).filter((e) => e.text && e.sourceIds?.length).map((e) => [e.text!.trim(), e.sourceIds!]));
+      const m = await getMaster();
+      const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a])));
+      content = structuredClone(content);
+      for (const s of content.sections)
+        for (const it of s.items)
+          for (const b of it.bullets) {
+            const src = sourcesByText.get(b.text.trim());
+            if (src) b.sourceIds = src.filter((id) => achievements.has(id));
+            if (b.include && !b.sourceIds.length && edits.some((e) => e.text?.trim() === b.text.trim())) b.warning = "Not linked to anything in your profile. Check it's accurate.";
+          }
+      flagNumbers(content, achievements);
+      if (i.headline !== undefined) content.header.headline = i.headline;
+      if (i.summary !== undefined) content.summary = i.summary;
+      await put("cvs", { ...cv, content, updatedAt: new Date().toISOString() });
+
+      const details: ActivityDetail[] = edits.map((e) => ({ label: e.op === "add" ? "Added line" : e.op === "remove" ? "Removed line" : "Rewrote line", before: e.previous, after: e.op === "remove" ? undefined : e.text }));
+      if (i.summary !== undefined) details.push({ label: "Summary", before: cv.content.summary, after: i.summary });
+      if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
+      await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
+      return json({ saved: true, applied: details.length, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Tracking
+
+  const STATUSES = ["saved", "cv", "applied", "interview", "offer", "rejected", "withdrawn"] as const;
+  server.registerTool(
+    "update_application",
+    {
+      title: "Update application",
+      description: "Track what happened: move the stage (applied, interview, offer, rejected, withdrawn), add a dated timeline event (e.g. an interview time), or save notes (recruiter name, salary band).",
+      inputSchema: {
+        application_id: z.string(),
+        status: z.enum(STATUSES).optional(),
+        status_detail: z.string().optional().describe("One sentence for the timeline"),
+        event: z.object({ title: z.string(), detail: z.string().optional(), date: z.string().optional().describe("ISO date or date-time") }).optional(),
+        note: z.string().optional().describe("Appended to the application's notes"),
+      },
+    },
+    async (i) => {
+      const job = await needApp(i.application_id);
+      const t = tracker();
+      await t.doc("jobs", job.id);
+      const parts: string[] = [];
+      const details: ActivityDetail[] = [];
+      if (i.status && i.status !== job.status) {
+        const from = job.status;
+        changeStatus(job, i.status as AppStatus, i.status_detail ?? "");
+        parts.push(`${STATUS_LABEL[from]} → ${STATUS_LABEL[i.status as AppStatus]}`);
+        details.push({ label: "Status", before: STATUS_LABEL[from], after: STATUS_LABEL[i.status as AppStatus] });
+      }
+      if (i.event) {
+        const parsed = i.event.date ? new Date(i.event.date) : null;
+        const d = parsed && !Number.isNaN(parsed.getTime()) ? parsed : new Date();
+        addEvent(job, { at: d.toISOString(), title: i.event.title, detail: i.event.detail ?? "" });
+        parts.push(i.event.title);
+        const hasTime = /T\d{2}:\d{2}/.test(i.event.date ?? "");
+        const label = d.toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", ...(hasTime ? { hour: "2-digit", minute: "2-digit" } : {}) });
+        details.push({ label: "Timeline", after: `${i.event.title} · ${label}` });
+      }
+      if (i.note?.trim()) {
+        job.notes = [job.notes, i.note.trim()].filter(Boolean).join("\n");
+        details.push({ label: "Note", after: i.note.trim() });
+      }
+      if (!details.length) return fail("Nothing to update.");
+      await saveJob(job);
+      await t.record({ kind: "status", summary: parts.join(" · ") || "Added a note", appId: job.id, details });
+      return text(`Updated. Timeline: ${appLink(job.id, "timeline")}`);
+    },
+  );
+
+  return server;
+}

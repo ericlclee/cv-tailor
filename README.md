@@ -1,0 +1,141 @@
+# CV Tailor
+
+Keep an honest record of your career, tailor an ATS-friendly CV for every job, and track each application, **by talking to your own AI chat**. CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
+
+- **Your chat app** (Claude Desktop, Claude Code, ChatGPT…) does the thinking and writing, on your own plan. No API key needed.
+- **CV Tailor** stores your profile and applications, reads job links, checks every CV line against your evidence, and shows everything live in the browser, where you edit, undo and download PDF/DOCX.
+
+## Run it locally
+
+```bash
+npm install
+npm run dev        # web app at http://localhost:3000, MCP endpoint at http://localhost:3000/mcp
+```
+
+Requires Node 22.5+. Without `DATABASE_URL`, data is stored in a local file, `./data/cv-tailor.db`. Keep the app running while you chat.
+
+### Connect your chat (local)
+
+**Claude Desktop.** Settings › Developer › Edit Config, add this, then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "cv-tailor": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://localhost:3000/mcp"]
+    }
+  }
+}
+```
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http cv-tailor http://localhost:3000/mcp
+```
+
+Locally, no password or token is needed: the MCP endpoint only answers requests addressed to localhost.
+
+## Deploy to Vercel
+
+Hosting it means your chat can reach it from anywhere, including claude.ai on the web and mobile, and ChatGPT, without your computer running.
+
+1. **Create a Supabase project** (free tier is plenty) at supabase.com. Then open **Connect**, choose **Transaction pooler** (port 6543, which suits Vercel's serverless functions), and copy the connection string with your database password filled in. That's your `DATABASE_URL`.
+
+   CV Tailor creates its tables automatically on first use, in a separate `cv_tailor` schema. Supabase's public API only exposes the `public` schema, so your data isn't reachable with the project's API keys; only this connection string can read it.
+
+   To copy your local data across: `DATABASE_URL="<connection string>" node scripts/copy-to-postgres.mjs`
+
+2. **Import the project in Vercel** (push it to GitHub, then vercel.com › Add New › Project), or run `npx vercel` in this folder.
+
+3. **Set environment variables** in the Vercel project (Settings › Environment Variables), then redeploy:
+
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | the Supabase connection string from step 1 |
+   | `APP_PASSWORD` | the password for the web app |
+   | `MCP_TOKEN` | a long random secret: `openssl rand -hex 24` |
+   | `APP_URL` | optional; defaults to the production address |
+
+   Without `APP_PASSWORD` the deployed app refuses to serve anything; without `MCP_TOKEN` the MCP endpoint refuses every request.
+
+4. **Connect your chat** to `https://<your-app>.vercel.app/mcp`. The app's Activity panel shows these snippets with your address filled in.
+
+   - **Claude Desktop** (token sent as a header):
+
+     ```json
+     {
+       "mcpServers": {
+         "cv-tailor": {
+           "command": "npx",
+           "args": ["-y", "mcp-remote", "https://<your-app>.vercel.app/mcp", "--header", "Authorization:${AUTH_HEADER}"],
+           "env": { "AUTH_HEADER": "Bearer <your MCP_TOKEN>" }
+         }
+       }
+     }
+     ```
+
+   - **Claude Code:** `claude mcp add --transport http cv-tailor https://<your-app>.vercel.app/mcp --header "Authorization: Bearer <your MCP_TOKEN>"`
+   - **claude.ai** (web and mobile): Settings › Connectors › Add custom connector, URL `https://<your-app>.vercel.app/mcp?key=<your MCP_TOKEN>`.
+   - **ChatGPT:** Settings › Connectors (developer mode), same URL.
+
+**Security.** This is a one-person setup. Anyone with the password can use the web app, and anyone with the token can read and change your data through the MCP endpoint. Keep both secret; to revoke access, change them in Vercel and redeploy. Changing the password signs every browser out. The token sits in the connector URL for apps that only accept a URL, so treat that URL like a password.
+
+**Running a local model instead** (LM Studio, or Ollama through an MCP-capable client like Open WebUI): point its MCP settings at the same URL. Small models are weaker at multi-step tool use, but the evidence checks still apply.
+
+## Using it
+
+Ask your chat things like:
+
+- "Help me build my CV Tailor profile. Here's my CV." (attach it)
+- "Ask me questions to strengthen my profile."
+- "Start an application for <job link>, then go through the gaps with me."
+- "Draft my CV for that job." / "Make it shorter." / "Sound more senior."
+- "I applied today." / "Interview on Tuesday at 2pm. Help me prepare."
+
+Every change shows up in the web app's **Activity** panel with **Undo**. Undo is refused if a later change touched the same data, so undo the newer one first.
+
+## Tools
+
+| Tool | What it does |
+|---|---|
+| `get_overview` | Profile strength, questions that would strengthen it, applications and their ids |
+| `get_profile` | Full profile with entry and achievement ids |
+| `update_profile` | Add, change or remove contact details, entries, achievements and skills |
+| `create_application` | Start an application from a link (Greenhouse, Lever, Ashby, Workday, most career pages) or pasted text |
+| `set_job_details` | Record the job's requirements as read by your chat |
+| `get_application` | Requirements with the evidence behind each, the CV with ids, timeline, notes, download links |
+| `mark_not_claimed` | Requirements you don't have; the CV never claims them |
+| `save_cv` | Save a CV your chat wrote. Every bullet must cite achievement ids |
+| `edit_cv` | Replace, remove or add bullets; change headline or summary |
+| `update_application` | Stage changes, dated timeline events, notes |
+
+**Honesty checks on every CV** (`src/lib/tailor.ts`):
+- Titles, employers and dates come from the profile, never from the chat.
+- Numbers that aren't in a bullet's cited sources are flagged.
+- Bullets with no sources are flagged.
+- Skills the profile doesn't show are dropped.
+- A requirement you said you lack is flagged if it appears.
+
+The warnings go back to your chat and appear in the CV view.
+
+## Code map
+
+```
+src/lib/mcp/server.ts   MCP tools and the instructions sent to your chat
+src/app/mcp/route.ts    Streamable HTTP endpoint (stateless) with localhost / token access checks
+src/lib/activity.ts     Change log with snapshot-based undo
+src/lib/tailor.ts       Turns a CV plan into CV content and checks it against the evidence
+src/lib/requirements.ts Links each job requirement to the achievements that prove it
+src/lib/applications.ts Status, timeline and notes
+src/lib/db.ts           Small JSON document store: Postgres/Supabase (DATABASE_URL) or a local SQLite file
+src/proxy.ts            Password gate for the web app (APP_PASSWORD)
+src/components/workspace/  Sidebar, documents (profile, match, CV, timeline) and the activity panel
+```
+
+## Next steps
+
+- Accounts and per-user storage, to host it for other people (today it is one person per deployment).
+- Prompt caching friendliness: tool results are compact, but long profiles are resent often.
+- A cover letter tool, using the same evidence rules.

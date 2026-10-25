@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cv-tailor-app",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/eric/Projects/cv-tailor", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}

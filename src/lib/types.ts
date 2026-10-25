@@ -1,0 +1,232 @@
+// Shared data shapes for the master profile, jobs and tailored CVs.
+
+export type EntryKind =
+  | "experience"
+  | "project"
+  | "education"
+  | "volunteer"
+  | "certification"
+  | "award"
+  | "publication";
+
+export const ENTRY_KINDS: { kind: EntryKind; label: string; plural: string }[] = [
+  { kind: "experience", label: "Experience", plural: "Experience" },
+  { kind: "project", label: "Project", plural: "Projects" },
+  { kind: "education", label: "Education", plural: "Education" },
+  { kind: "volunteer", label: "Volunteering", plural: "Volunteering" },
+  { kind: "certification", label: "Certification", plural: "Certifications" },
+  { kind: "award", label: "Award", plural: "Awards" },
+  { kind: "publication", label: "Publication", plural: "Publications" },
+];
+
+export interface Link {
+  label: string;
+  url: string;
+}
+
+export interface Profile {
+  name: string;
+  headline: string;
+  email: string;
+  phone: string;
+  location: string;
+  links: Link[];
+  summary: string;
+}
+
+/** One reusable fact: a bullet that can be selected and reworded for a CV. */
+export interface Achievement {
+  id: string;
+  text: string;
+  skills: string[];
+  metrics: string[];
+}
+
+/** A role, project, degree, etc. Holds the achievements that came out of it. */
+export interface Entry {
+  id: string;
+  kind: EntryKind;
+  title: string;
+  organization: string;
+  location: string;
+  startDate: string;
+  endDate: string;
+  current: boolean;
+  description: string;
+  url: string;
+  achievements: Achievement[];
+  sort: number;
+  updatedAt: string;
+}
+
+export interface Skill {
+  id: string;
+  name: string;
+  category: string;
+}
+
+export interface ParsedJob {
+  title: string;
+  company: string;
+  location: string;
+  seniority: string;
+  summary: string;
+  mustHave: string[];
+  niceToHave: string[];
+  responsibilities: string[];
+  keywords: string[];
+  yearsExperience: string;
+  education: string;
+}
+
+/** Where an application is. The first five are the forward track; the rest close it. */
+export type AppStatus = "saved" | "cv" | "applied" | "interview" | "offer" | "rejected" | "withdrawn";
+export const TRACK: { status: AppStatus; label: string }[] = [
+  { status: "saved", label: "Saved" },
+  { status: "cv", label: "CV" },
+  { status: "applied", label: "Applied" },
+  { status: "interview", label: "Interview" },
+  { status: "offer", label: "Offer" },
+];
+export const CLOSED_STATUSES: AppStatus[] = ["rejected", "withdrawn"];
+
+export interface TimelineEvent {
+  id: string;
+  /** ISO date-time the event happened (or will happen, for an upcoming interview). */
+  at: string;
+  title: string;
+  detail: string;
+}
+
+/** A job the user is applying for. Stored in the "jobs" collection. */
+export interface Job {
+  id: string;
+  url: string;
+  source: string;
+  rawText: string;
+  parsed: ParsedJob | null;
+  createdAt: string;
+  status?: AppStatus;
+  /** Furthest track stage reached before closing, so a closed application still shows how far it got. */
+  reached?: AppStatus;
+  events?: TimelineEvent[];
+  notes?: string;
+  /** Requirements the user said they don't have; never claimed on the CV. */
+  unclaimed?: string[];
+  cvId?: string | null;
+  updatedAt?: string;
+}
+
+export interface CvBullet {
+  id: string;
+  text: string;
+  /** Achievement ids from the master profile this bullet is based on. */
+  sourceIds: string[];
+  include: boolean;
+  /** Set by the fact check when the bullet says something the sources don't support. */
+  warning?: string;
+}
+
+export interface CvItem {
+  id: string;
+  sourceEntryId: string | null;
+  title: string;
+  organization: string;
+  location: string;
+  dates: string;
+  include: boolean;
+  bullets: CvBullet[];
+}
+
+export interface CvSection {
+  id: string;
+  kind: EntryKind;
+  title: string;
+  include: boolean;
+  items: CvItem[];
+}
+
+export interface CvSkillGroup {
+  category: string;
+  items: string[];
+}
+
+export interface CvContent {
+  header: Omit<Profile, "summary">;
+  summary: string;
+  skills: CvSkillGroup[];
+  sections: CvSection[];
+}
+
+export interface CvDraft {
+  id: string;
+  jobId: string | null;
+  name: string;
+  content: CvContent;
+  /** Notes about choices made and gaps found. */
+  notes: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SuggestionKind = "missing-metric" | "thin-entry" | "missing-section" | "skill-evidence" | "job-gap" | "interview";
+
+export interface Suggestion {
+  id: string;
+  kind: SuggestionKind;
+  question: string;
+  /** Why we are asking; shown under the question. */
+  reason: string;
+  entryId: string | null;
+  achievementId: string | null;
+  jobId: string | null;
+  status: "open" | "answered" | "dismissed";
+  createdAt: string;
+}
+
+export interface KeywordReport {
+  score: number;
+  matched: string[];
+  missing: string[];
+  mustHaveMatched: string[];
+  mustHaveMissing: string[];
+}
+
+// CV edits (from the edit_cv tool)
+
+export interface CvEdit {
+  op: "replace" | "remove" | "add";
+  /** Bullet to replace or remove. */
+  bulletId?: string;
+  /** CV item (role) to add a bullet to. */
+  itemId?: string;
+  text?: string;
+  /** Text before the change, filled in by the server for display. */
+  previous?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Activity: every change made from a connected chat, with what it replaced.
+
+export type Snapshot = { collection: string; id: string; doc: unknown | null } | { kv: string; value: unknown };
+
+export interface ActivityDetail {
+  label: string;
+  before?: string;
+  after?: string;
+}
+
+export interface Activity {
+  id: string;
+  at: string;
+  /** Where it came from: "chat" (an MCP client) or "web" (a button in this app). */
+  source: "chat" | "web";
+  kind: "profile" | "application" | "job" | "cv" | "status";
+  summary: string;
+  details: ActivityDetail[];
+  /** The application it belongs to, or null for the master profile. */
+  appId: string | null;
+  status: "applied" | "undone";
+  /** The state of everything this change touched, before it ran. Restored on undo. */
+  snapshots: Snapshot[];
+}

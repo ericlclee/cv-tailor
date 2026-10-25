@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AMBITION, ambitionName, type Ambition, type CvRating } from "@/lib/ambition";
 import { api } from "@/lib/client/api";
 import { emitRefresh, useRefresh } from "@/lib/client/bus";
@@ -59,7 +59,7 @@ export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab:
           </div>
         </DocBody>
       ) : tab === "cv" ? (
-        <CvTab data={data} reload={load} role={role} />
+        <CvTab data={data} reload={load} update={setData} role={role} />
       ) : tab === "timeline" ? (
         <TimelineTab data={data} reload={load} />
       ) : (
@@ -199,7 +199,7 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
 
 // ---------------------------------------------------------------------------
 
-function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role: string }) {
+function CvTab({ data, reload, update, role }: { data: AppData; reload: () => void; update: (d: AppData) => void; role: string }) {
   const { cv, job, report } = data;
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState("");
@@ -208,7 +208,7 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
   if (!cv) {
     return (
       <>
-        <AmbitionPicker job={job} cv={null} role={role} reload={reload} />
+        <AmbitionPicker data={data} update={update} role={role} />
         <DocBody>
           <div className="flex flex-col items-start gap-3 rounded-xl border-[1.5px] border-dashed border-control px-6 py-7">
             <p className="text-lg font-semibold">No CV yet</p>
@@ -277,7 +277,7 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
           </Button>
         )}
       </div>
-      <AmbitionPicker job={job} cv={cv} role={role} reload={reload} />
+      <AmbitionPicker data={data} update={update} role={role} />
       <div className="flex flex-col items-center gap-4 bg-[#e4e7ec] px-4 py-7 sm:px-7">
         <AmbitionLegend counts={counts} chosen={job.ambition} highlights={highlights} onToggle={() => setHighlights(!highlights)} anyAbove={shown.some((b) => (rating.bullets[b.id] ?? 0) > job.ambition) || rating.summary > job.ambition} />
         <article aria-label="CV" className="cv-page w-full max-w-[720px] bg-white px-7 py-10 text-[13px] shadow-[0_1px_2px_rgba(14,17,22,0.08),0_8px_24px_rgba(14,17,22,0.08)] sm:px-[52px] sm:py-12">
@@ -382,23 +382,23 @@ function Rated({ level, above, on, children }: { level: Ambition; above: boolean
   return <span className={cx("rounded-[3px] px-[2px] [box-decoration-break:clone] [-webkit-box-decoration-break:clone]", HL[level], above && "outline-[1.5px] outline-offset-1 outline-[#b42318] outline-dashed")}>{children}</span>;
 }
 
-function AmbitionPicker({ job, cv, role, reload }: { job: App; cv: CvDraft | null; role: string; reload: () => void }) {
-  const [saving, setSaving] = useState(false);
+function AmbitionPicker({ data, update, role }: { data: AppData; update: (d: AppData) => void; role: string }) {
+  const { job, cv } = data;
   const level = job.ambition;
   const stale = cv && cv.ambition !== undefined && cv.ambition !== level;
+  const latest = useRef(0);
 
+  // It's only a setting: show the new level at once and save in the background,
+  // putting the old one back if the save fails.
   async function choose(next: Ambition) {
-    if (next === level || saving) return;
-    setSaving(true);
+    if (next === level) return;
+    const request = ++latest.current;
+    update({ ...data, job: { ...job, ambition: next } });
     try {
       await api(`/api/applications/${job.id}`, { method: "PATCH", body: { ambition: next } });
-      toast(cv ? `Set to ${ambitionName(next)}. Ask your chat to redraft at this level.` : `Set to ${ambitionName(next)}`);
-      reload();
-      emitRefresh();
     } catch (e) {
+      if (request === latest.current) update({ ...data, job: { ...job, ambition: level } });
       toastError(e);
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -415,7 +415,6 @@ function AmbitionPicker({ job, cv, role, reload }: { job: App; cv: CvDraft | nul
               type="button"
               role="radio"
               aria-checked={a.level === level}
-              disabled={saving}
               onClick={() => choose(a.level)}
               className={cx("flex min-h-9 items-center gap-2 rounded-[7px] px-3 text-sm font-medium", a.level === level ? "bg-surface text-ink shadow-[0_1px_2px_rgba(14,17,22,0.12)]" : "text-ink-2 hover:text-ink")}
             >

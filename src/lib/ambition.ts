@@ -4,36 +4,38 @@
 
 export type Ambition = 0 | 1 | 2 | 3;
 
-export const DEFAULT_AMBITION: Ambition = 1;
+export const DEFAULT_AMBITION: Ambition = 2;
 
+// The master profile is the plain factual record. Every level reframes it for the job;
+// the levels differ in how far the framing may stretch the facts.
 export const AMBITION: { level: Ambition; name: string; line: string; setting: string; writer: string }[] = [
   {
     level: 0,
     name: "Faithful",
-    line: "Same facts as your profile, rewritten for the job",
-    setting: "Rewritten for this job, but every fact, number and scope stays exactly as your profile has it.",
-    writer: "Rewrite freely for this job, but keep every fact, number, scope and role exactly as the profile states it.",
+    line: "Your facts, framed for the job",
+    setting: "Framed in the best light for this job, but every fact, number and scope stays exactly as your profile has it.",
+    writer: "Frame each fact in its best light for this job: outcome first, the strongest verb the facts support, the job's own terms. Keep every number, scope and role exactly as the profile states it.",
   },
   {
     level: 1,
     name: "Polished",
-    line: "Stronger wording, same facts",
-    setting: "Confident, active wording and ownership verbs. The facts and numbers stay as they are.",
-    writer: "Rewrite with confident, active wording and ownership verbs (Led, Owned, Built) for work the user drove. Keep the numbers as given, tidying rough estimates into clean figures.",
+    line: "Ownership and impact framing, same facts",
+    setting: "Claims the work you drove, leads with impact, and states scope at the level it mattered. Numbers stay as they are, tidied into clean figures.",
+    writer: "Claim the work the user drove as theirs (Led, Owned, Built, Delivered), lead with the impact, and state scope at the level it mattered (team, product, client, business). Keep the numbers, tidied into clean figures.",
   },
   {
     level: 2,
     name: "Elevated",
-    line: "Broader scope or ownership, rounded-up numbers",
-    setting: "Claims ownership of team work you drove, frames scope and impact broadly, and rounds numbers in your favour.",
-    writer: "Claim ownership of team work the user was central to. Frame scope and impact broadly: the system, client or business outcome the work fed into. Round numbers in the user's favour. Map adjacent experience onto the job's requirements, in its exact terms.",
+    line: "Senior framing: broader scope, rounded-up numbers",
+    setting: "Presents you a level more senior: ownership of team results you were central to, business-level scope and impact, numbers rounded up, adjacent experience mapped onto every requirement.",
+    writer: "Present the user a level more senior. Claim ownership of team results they were central to; describe scope and impact at the business level; round numbers up generously; state the impact the profile clearly implies even where it isn't measured; map adjacent experience onto every requirement the job lists, in its exact terms.",
   },
   {
     level: 3,
     name: "Bold",
-    line: "A claim or figure beyond your profile",
-    setting: "Everything in Elevated, plus stronger figures and outcomes you could argue in an interview, and skills you've only used lightly.",
-    writer: "Everything in Elevated, plus stronger figures and outcomes the user could argue in an interview, and skills they've only used lightly. Propose any new number to the user and get their OK before saving it.",
+    line: "Claims or figures beyond your profile",
+    setting: "Everything in Elevated, plus stronger figures, outcomes and scope you could argue in an interview, and skills you've used only lightly listed as working skills.",
+    writer: "Everything in Elevated, plus stronger figures, outcomes and scope the user could argue in an interview, and skills they've used only lightly listed as working skills. Keep every figure plausible for the role and company size.",
   },
 ];
 

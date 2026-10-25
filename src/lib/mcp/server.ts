@@ -12,7 +12,7 @@ import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount } from "../requirements";
 import { profileStrength } from "../strength";
-import { buildCvFromPlan, flagNumbers, nearCopies, rateCv, UNLINKED_WARNING } from "../tailor";
+import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
@@ -32,7 +32,7 @@ Workflow:
 2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
 3. When the user shares a job (link or text), call create_application, then read the description and call set_job_details with the real requirements.
 4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile. If not, call mark_not_claimed.
-5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Polished unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
+5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Elevated unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
 6. Keep the application current with update_application (applied, interview dates, outcome, notes).
 
 Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level and never above it unless the user asks.
@@ -41,13 +41,14 @@ Rate every bullet and the summary you write on the same 0–3 scale (0 same fact
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
 Every CV bullet must cite the achievement ids it is based on.
 
-Writing the CV (at every level): the master profile is the factual record, written to be complete; the CV is a new document written for this one job. Never copy achievement text across.
+Writing the CV (at every level): the master profile is the plain factual baseline, written to be complete, not persuasive. The CV is a new document that frames those facts in the best possible way for this one job. Never copy achievement text across.
 - Start from what the job values most (its responsibilities and must-haves). Choose and order bullets by relevance to it, not by the profile's order.
-- Re-summarise each bullet in your own words: one tight line of about 15–25 words, a strong verb first (past tense, present for current roles), then what was done and the result. Drop tool lists, internal names and detail this job doesn't care about.
+- Frame every bullet as strongly as the ambition level allows: the outcome or the scale first, then what the user did, with the strongest verb the level supports. Make it read like the work of someone already doing the target job.
+- One tight line of about 15–25 words per bullet. Drop tool lists, internal names and detail this job doesn't care about.
 - Combine related achievements into one bullet, or split a dense one, citing every source id.
-- Use the job's vocabulary for the same thing, and lead with the outcome where there is one.
+- Use the job's vocabulary for the same thing, but write plainly: concrete nouns, numbers and outcomes, not adjectives. No filler like "spearheaded", "leveraged", "synergy", "results-driven", "passionate", "cutting-edge", "best-in-class", "dynamic" or "innovative", and no stacking several job keywords into one line.
 - The summary is 2–3 sentences pitched at this role, not a recap of the latest job. Order and name skills the way the job does.
-Ambition controls which facts may change, never whether to rewrite: a Faithful bullet still reads freshly written for this job. The server flags bullets that are near-copies of the profile; rewrite them with edit_cv.
+Ambition controls which facts may change, never whether to reframe: a Faithful bullet still reads as strongly framed for this job. The server flags near-copies of the profile and buzzword filler; fix them with edit_cv.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
@@ -538,6 +539,7 @@ export function createMcpServer() {
 
       const warnings = cvWarnings(content, job.unclaimed);
       const copied = nearCopies(content, m);
+      const filler = buzzwords(content);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition);
       const report = keywordReport(cvPlainText(content), job.parsed);
       const bullets = content.sections.flatMap((s) => (s.include ? s.items.flatMap((x) => (x.include ? x.bullets.filter((b) => b.include) : [])) : [])).length;
@@ -554,12 +556,13 @@ export function createMcpServer() {
         missingMustHaves: report.mustHaveMissing,
         ambition,
         copiedFromProfile: copied.length ? copied : undefined,
+        buzzwords: filler.length ? filler : undefined,
         warnings,
         skillsToPrepare: unbackedSkills.length ? `${unbackedSkills.join(", ")} (kept on the CV, but no achievement shows them yet)` : undefined,
         unknownEntryIds: unknown.length ? unknown : undefined,
         cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: `${copied.length ? `${copied.length} bullet${copied.length > 1 ? "s read" : " reads"} like the profile's own wording: rewrite ${copied.length > 1 ? "them" : "it"} for this job with edit_cv before showing the user. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
+        tellTheUser: `${copied.length || filler.length ? `Before showing the user, fix with edit_cv: ${[copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -624,7 +627,8 @@ export function createMcpServer() {
       if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
       await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
       const copied = nearCopies(content, m);
-      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      const filler = buzzwords(content);
+      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

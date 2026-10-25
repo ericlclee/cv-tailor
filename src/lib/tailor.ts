@@ -125,8 +125,8 @@ export function rateCv(content: CvContent, m: Master): CvRating {
 const words = (t: string) => normalize(t).split(/\s+/).filter((w) => w.length > 2);
 
 /**
- * Bullets that read as a copy of the profile rather than a rewrite for the job: nearly
- * all their words come from one source and they're about as long as it.
+ * Bullets that read as the profile's own wording rather than a reframing for the job,
+ * including trimmed-down copies: most of their words come straight from their sources.
  */
 export function nearCopies(content: CvContent, m: Master) {
   const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a.text] as const)));
@@ -134,15 +134,28 @@ export function nearCopies(content: CvContent, m: Master) {
   for (const s of content.sections)
     for (const i of s.items)
       for (const b of i.bullets) {
-        if (!b.include || b.sourceIds.length !== 1) continue;
-        const src = achievements.get(b.sourceIds[0]);
-        if (!src) continue;
+        if (!b.include || !b.sourceIds.length) continue;
+        const sw = new Set(b.sourceIds.flatMap((id) => words(achievements.get(id) ?? "")));
+        if (!sw.size) continue;
         const bw = words(b.text);
-        const sw = new Set(words(src));
-        const shared = bw.filter((w) => sw.has(w)).length / Math.max(bw.length, 1);
-        const ratio = bw.length / Math.max(sw.size, 1);
-        if (shared >= 0.8 && ratio > 0.7) out.push({ bulletId: b.id, text: b.text });
+        if (bw.length >= 5 && bw.filter((w) => sw.has(w)).length / bw.length >= 0.75) out.push({ bulletId: b.id, text: b.text });
       }
+  return out;
+}
+
+// Filler that makes a CV read as generic. Kept short: plain strong verbs (Led, Built,
+// Owned) are fine; these add nothing a reader can check.
+const BUZZWORDS = /\b(spearhead(?:ed|ing)?|leverag(?:e|ed|ing)|synerg(?:y|ies|istic)|results?-driven|passionate|cutting-edge|best-in-class|world-class|dynamic|innovative|game-chang(?:er|ing)|thought leader(?:ship)?|go-getter|self-starter|detail-oriented|proven track record|seamless(?:ly)?|robust|holistic|paradigm|disruptive|value-add(?:ed)?|move the needle|rockstar|ninja|guru)\b/gi;
+
+/** Lines that use buzzword filler, with the words found. */
+export function buzzwords(content: CvContent) {
+  const out: { bulletId: string; text: string; words: string[] }[] = [];
+  const check = (bulletId: string, text: string) => {
+    const hits = [...new Set((text.match(BUZZWORDS) ?? []).map((w) => w.toLowerCase()))];
+    if (hits.length) out.push({ bulletId, text, words: hits });
+  };
+  check("summary", content.summary);
+  for (const s of content.sections) for (const i of s.items) for (const b of i.bullets) if (b.include) check(b.id, b.text);
   return out;
 }
 

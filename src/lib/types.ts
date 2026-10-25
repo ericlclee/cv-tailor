@@ -1,5 +1,7 @@
 // Shared data shapes for the master profile, jobs and tailored CVs.
 
+import type { Ambition } from "./ambition";
+
 export type EntryKind =
   | "experience"
   | "project"
@@ -113,6 +115,8 @@ export interface Job {
   notes?: string;
   /** Requirements the user said they don't have; never claimed on the CV. */
   unclaimed?: string[];
+  /** How far the CV may go beyond the profile (see ambition.ts). Polished when unset. */
+  ambition?: Ambition;
   cvId?: string | null;
   updatedAt?: string;
 }
@@ -125,6 +129,8 @@ export interface CvBullet {
   include: boolean;
   /** Set by the fact check when the bullet says something the sources don't support. */
   warning?: string;
+  /** The writer's rating of how far this line goes beyond its sources. */
+  ambition?: Ambition;
 }
 
 export interface CvItem {
@@ -154,6 +160,8 @@ export interface CvSkillGroup {
 export interface CvContent {
   header: Omit<Profile, "summary">;
   summary: string;
+  /** The writer's rating of the summary. */
+  summaryAmbition?: Ambition;
   skills: CvSkillGroup[];
   sections: CvSection[];
 }
@@ -165,6 +173,8 @@ export interface CvDraft {
   content: CvContent;
   /** Notes about choices made and gaps found. */
   notes: string[];
+  /** The application's ambition level when this CV was written. */
+  ambition?: Ambition;
   createdAt: string;
   updatedAt: string;
 }
@@ -201,6 +211,7 @@ export interface CvEdit {
   /** CV item (role) to add a bullet to. */
   itemId?: string;
   text?: string;
+  ambition?: Ambition;
   /** Text before the change, filled in by the server for display. */
   previous?: string;
 }

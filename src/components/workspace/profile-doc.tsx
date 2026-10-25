@@ -39,7 +39,6 @@ export function ProfileDocument() {
   return (
     <DocPanel>
       <DocBar title="Master profile">
-        <span className="hidden text-sm text-muted sm:inline">Every CV is written only from what&apos;s here</span>
         <span className="text-sm text-muted">Strength</span>
         <Meter value={m?.strength ?? 0} />
         <span className="font-mono text-sm font-medium">{m ? m.strength : "–"}</span>

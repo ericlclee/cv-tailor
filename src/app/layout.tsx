@@ -8,7 +8,7 @@ const plexMono = IBM_Plex_Mono({ variable: "--font-plex-mono", subsets: ["latin"
 
 export const metadata: Metadata = {
   title: "CV Tailor",
-  description: "Build an honest record of your career in conversation, then tailor an ATS-friendly CV for every job.",
+  description: "Build a record of your career in conversation, then tailor a standout, ATS-friendly CV for every job.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

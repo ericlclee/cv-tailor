@@ -1,4 +1,5 @@
 import "server-only";
+import { DEFAULT_AMBITION } from "./ambition";
 import { get, list, newId, put } from "./db";
 import { parseJob, type FetchedJob } from "./jobs";
 import { CLOSED_STATUSES, TRACK, type AppStatus, type Job, type TimelineEvent } from "./types";
@@ -94,5 +95,5 @@ export type AppSummary = Awaited<ReturnType<typeof listApplications>>[number];
 export async function getApplication(id: string) {
   const job = await get("jobs", id);
   if (!job?.parsed) return null;
-  return { ...job, parsed: job.parsed, status: job.status ?? "saved", events: job.events ?? [], notes: job.notes ?? "", unclaimed: job.unclaimed ?? [], cvId: job.cvId ?? null };
+  return { ...job, parsed: job.parsed, status: job.status ?? "saved", events: job.events ?? [], notes: job.notes ?? "", unclaimed: job.unclaimed ?? [], cvId: job.cvId ?? null, ambition: job.ambition ?? DEFAULT_AMBITION };
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { AMBITION, ambitionName, type Ambition, type CvRating } from "@/lib/ambition";
 import { api } from "@/lib/client/api";
 import { emitRefresh, useRefresh } from "@/lib/client/bus";
 import type { Requirement } from "@/lib/requirements";
@@ -11,12 +12,13 @@ import { Button, Spinner, Textarea, cx } from "../ui";
 import { copyText } from "./activity-panel";
 import { DocBar, DocBody, DocPanel, SectionLabel, Tabs } from "./doc";
 
-type App = Required<Pick<Job, "events" | "notes" | "unclaimed">> & Job & { parsed: NonNullable<Job["parsed"]>; status: AppStatus };
+type App = Required<Pick<Job, "events" | "notes" | "unclaimed">> & Job & { parsed: NonNullable<Job["parsed"]>; status: AppStatus; ambition: Ambition };
 interface AppData {
   job: App;
   requirements: Requirement[];
   cv: CvDraft | null;
   report: KeywordReport | null;
+  rating: CvRating | null;
 }
 
 export function ApplicationDocument({ id, tab, role }: { id: string; tab: string; role: string }) {
@@ -136,7 +138,7 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
           </p>
           <p className="max-w-[200px] text-[15px] leading-snug text-ink-2">requirements backed by your evidence</p>
           <span className="flex-1" />
-          <Button variant="primary" onClick={() => copyText(`${job.cvId ? "Redraft" : "Draft"} my CV for ${role} in CV Tailor.`, "Prompt copied")}>
+          <Button variant="primary" onClick={() => copyText(draftPrompt(role, job.ambition, Boolean(job.cvId)), "Prompt copied")}>
             {job.cvId ? "Copy redraft prompt" : "Copy draft prompt"}
           </Button>
         </div>
@@ -165,7 +167,7 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
                   ))}
                   {r.state === "gap" && (
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="flex-1 text-sm text-ink-2">Nothing in your evidence shows this yet, so the CV won&apos;t claim it.</p>
+                      <p className="flex-1 text-sm text-ink-2">Nothing in your profile covers this yet. Tell your chat about anything related, even if it was small.</p>
                       <Button size="sm" onClick={() => copyText(`For ${role} in CV Tailor: here's my experience with ${r.name}: `, "Prompt copied")}>
                         Copy prompt for your chat
                       </Button>
@@ -199,18 +201,24 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
   const { cv, job, report } = data;
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState("");
+  const [highlights, setHighlights] = useState(true);
 
   if (!cv) {
     return (
-      <DocBody>
-        <div className="flex flex-col items-start gap-3 rounded-xl border-[1.5px] border-dashed border-control px-6 py-7">
-          <p className="text-lg font-semibold">No CV yet</p>
-          <p className="text-[15px] leading-relaxed text-muted">Ask your chat to draft it. It picks and rewords the evidence from your master profile that fits this job, and CV Tailor checks every line against that evidence before it appears here.</p>
-          <Button variant="primary" onClick={() => copyText(`Draft my CV for ${role} in CV Tailor.`, "Prompt copied")}>
-            Copy prompt for your chat
-          </Button>
-        </div>
-      </DocBody>
+      <>
+        <AmbitionPicker job={job} cv={null} role={role} reload={reload} />
+        <DocBody>
+          <div className="flex flex-col items-start gap-3 rounded-xl border-[1.5px] border-dashed border-control px-6 py-7">
+            <p className="text-lg font-semibold">No CV yet</p>
+            <p className="text-[15px] leading-relaxed text-muted">
+              Choose how ambitious this CV should be, then ask your chat to draft it. It picks and rewords the achievements from your master profile that fit this job, and rates every line it writes so you can see how far each one goes.
+            </p>
+            <Button variant="primary" onClick={() => copyText(draftPrompt(role, job.ambition, false), "Prompt copied")}>
+              Copy prompt for your chat
+            </Button>
+          </div>
+        </DocBody>
+      </>
     );
   }
 
@@ -228,7 +236,7 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
 
   async function saveSummary(summary: string) {
     try {
-      await api(`/api/cvs/${cv!.id}`, { method: "PUT", body: { name: cv!.name, content: { ...cv!.content, summary } } });
+      await api(`/api/cvs/${cv!.id}`, { method: "PUT", body: { name: cv!.name, content: { ...cv!.content, summary, summaryAmbition: undefined } } });
       setEditing(null);
       reload();
     } catch (e) {
@@ -239,6 +247,10 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
   const h = cv.content.header;
   const contact = [h.email, h.phone, h.location, ...h.links.map((l) => l.url.replace(/^https?:\/\/(www\.)?/, ""))].filter(Boolean);
   const applied = ["applied", "interview", "offer"].includes(job.status) || CLOSED_STATUSES.includes(job.status);
+  const rating = data.rating ?? { bullets: {}, summary: 0 as Ambition, skills: {} };
+  const shown = cv.content.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : []));
+  const counts = AMBITION.map((a) => shown.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length);
+  const mark = (level: Ambition) => ({ level, above: highlights && level > job.ambition, on: highlights });
   const pageEstimate = cv.content.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : [])).length;
 
   return (
@@ -263,7 +275,9 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
           </Button>
         )}
       </div>
-      <div className="flex justify-center bg-[#e4e7ec] px-4 py-7 sm:px-7">
+      <AmbitionPicker job={job} cv={cv} role={role} reload={reload} />
+      <div className="flex flex-col items-center gap-4 bg-[#e4e7ec] px-4 py-7 sm:px-7">
+        <AmbitionLegend counts={counts} chosen={job.ambition} highlights={highlights} onToggle={() => setHighlights(!highlights)} anyAbove={shown.some((b) => (rating.bullets[b.id] ?? 0) > job.ambition) || rating.summary > job.ambition} />
         <article aria-label="CV" className="cv-page w-full max-w-[720px] bg-white px-7 py-10 text-[13px] shadow-[0_1px_2px_rgba(14,17,22,0.08),0_8px_24px_rgba(14,17,22,0.08)] sm:px-[52px] sm:py-12">
           <h2 className="text-2xl font-bold tracking-tight">{h.name || "Your name"}</h2>
           {h.headline && <p className="mt-0.5 text-sm">{h.headline}</p>}
@@ -274,7 +288,7 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
             <InlineEdit value={text} onChange={setText} onCancel={() => setEditing(null)} onSave={() => saveSummary(text)} />
           ) : (
             <button type="button" className="w-full rounded-sm text-left hover:bg-accent-soft" onClick={() => (setText(cv.content.summary), setEditing("summary"))}>
-              {cv.content.summary || <span className="text-faint">Add a summary</span>}
+              {cv.content.summary ? <Rated {...mark(rating.summary)}>{cv.content.summary}</Rated> : <span className="text-faint">Add a summary</span>}
             </button>
           )}
 
@@ -284,7 +298,12 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
               {cv.content.skills.map((g, i) => (
                 <p key={i} className="mb-0.5">
                   {g.category && <strong>{g.category}: </strong>}
-                  {g.items.join(", ")}
+                  {g.items.map((item, k) => (
+                    <span key={item}>
+                      {k > 0 && ", "}
+                      <Rated {...mark(rating.skills[item] ?? 0)}>{item}</Rated>
+                    </span>
+                  ))}
                 </p>
               ))}
             </>
@@ -317,17 +336,17 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
                                   value={text}
                                   onChange={setText}
                                   onCancel={() => setEditing(null)}
-                                  onSave={() => save((x) => ((x.text = text), (x.warning = undefined)), b.id)}
+                                  onSave={() => save((x) => ((x.text = text), (x.warning = undefined), (x.ambition = undefined)), b.id)}
                                   onRemove={() => save((x) => (x.include = false), b.id)}
                                 />
                               ) : (
                                 <button
                                   type="button"
-                                  title={b.warning ?? "Click to edit"}
+                                  title={[lineTitle(rating.bullets[b.id] ?? 0, job.ambition), b.warning, "Click to edit"].filter(Boolean).join("\n")}
                                   onClick={() => (setText(b.text), setEditing(b.id))}
-                                  className={cx("flex-1 rounded-sm text-left hover:bg-accent-soft", b.warning && "underline decoration-warn decoration-wavy underline-offset-[3px]")}
+                                  className={cx("flex-1 rounded-sm text-left hover:bg-accent-soft", !highlights && b.warning && "underline decoration-warn decoration-wavy underline-offset-[3px]")}
                                 >
-                                  {b.text}
+                                  <Rated {...mark(rating.bullets[b.id] ?? 0)}>{b.text}</Rated>
                                 </button>
                               )}
                             </li>
@@ -339,8 +358,112 @@ function CvTab({ data, reload, role }: { data: AppData; reload: () => void; role
             ))}
         </article>
       </div>
-      <p className="px-7 pb-6 text-center text-[13px] text-muted">Click any line to edit it, or ask your chat for changes like “make it shorter” or “sound more senior”.</p>
+      <p className="px-7 pb-6 text-center text-[13px] text-muted">Click any line to edit it, or ask your chat for changes like “make it shorter” or “tone down the Bold lines”. Highlights are never included in the PDF or DOCX.</p>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Ambition: the level the user picks for this application, and how each CV line is rated.
+
+const HL: Record<Ambition, string> = { 0: "", 1: "bg-[#e3e9ff]", 2: "bg-[#ffecb0]", 3: "bg-[#ffd4cf]" };
+const SWATCH: Record<Ambition, string> = { 0: "bg-white ring-1 ring-[#b9bfc8]", 1: "bg-[#c9d4ff]", 2: "bg-[#ffd966]", 3: "bg-[#ff9f94]" };
+
+const draftPrompt = (role: string, level: Ambition, redraft: boolean) => `${redraft ? "Redraft" : "Draft"} my CV for ${role} in CV Tailor at the ${ambitionName(level)} ambition level.`;
+
+function lineTitle(level: Ambition, chosen: Ambition) {
+  return `${ambitionName(level)}: ${AMBITION[level].line}${level > chosen ? ` (above the ${ambitionName(chosen)} level you chose)` : ""}`;
+}
+
+function Rated({ level, above, on, children }: { level: Ambition; above: boolean; on: boolean; children: React.ReactNode }) {
+  if (!on || (!level && !above)) return <>{children}</>;
+  return <span className={cx("rounded-[3px] px-[2px] [box-decoration-break:clone] [-webkit-box-decoration-break:clone]", HL[level], above && "outline-[1.5px] outline-offset-1 outline-[#b42318] outline-dashed")}>{children}</span>;
+}
+
+function AmbitionPicker({ job, cv, role, reload }: { job: App; cv: CvDraft | null; role: string; reload: () => void }) {
+  const [saving, setSaving] = useState(false);
+  const level = job.ambition;
+  const stale = cv && cv.ambition !== undefined && cv.ambition !== level;
+
+  async function choose(next: Ambition) {
+    if (next === level || saving) return;
+    setSaving(true);
+    try {
+      await api(`/api/applications/${job.id}`, { method: "PATCH", body: { ambition: next } });
+      toast(cv ? `Set to ${ambitionName(next)}. Ask your chat to redraft at this level.` : `Set to ${ambitionName(next)}`);
+      reload();
+      emitRefresh();
+    } catch (e) {
+      toastError(e);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <section aria-labelledby="ambition-h" className="flex flex-col gap-2.5 border-b border-line-soft bg-surface px-7 py-4">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
+        <h2 id="ambition-h" className="text-sm font-semibold">
+          Ambition
+        </h2>
+        <div role="radiogroup" aria-labelledby="ambition-h" className="flex flex-wrap gap-1 rounded-[10px] bg-paper p-1">
+          {AMBITION.map((a) => (
+            <button
+              key={a.level}
+              type="button"
+              role="radio"
+              aria-checked={a.level === level}
+              disabled={saving}
+              onClick={() => choose(a.level)}
+              className={cx("flex min-h-9 items-center gap-2 rounded-[7px] px-3 text-sm font-medium", a.level === level ? "bg-surface text-ink shadow-[0_1px_2px_rgba(14,17,22,0.12)]" : "text-ink-2 hover:text-ink")}
+            >
+              <span aria-hidden="true" className={cx("size-2.5 rounded-full", SWATCH[a.level])} />
+              {a.name}
+            </button>
+          ))}
+        </div>
+        <span className="flex-1" />
+        {cv && (
+          <Button size="sm" variant={stale ? "primary" : "ghost"} onClick={() => copyText(draftPrompt(role, level, true), "Prompt copied")}>
+            Copy redraft prompt
+          </Button>
+        )}
+      </div>
+      <p className="text-sm leading-relaxed text-ink-2">
+        {AMBITION[level].setting}
+        {stale && <span className="text-warn-ink"> This CV was written at {ambitionName(cv.ambition!)}, so ask your chat to redraft it.</span>}
+      </p>
+    </section>
+  );
+}
+
+function AmbitionLegend({ counts, chosen, highlights, onToggle, anyAbove }: { counts: number[]; chosen: Ambition; highlights: boolean; onToggle: () => void; anyAbove: boolean }) {
+  return (
+    <section aria-label="Ambition legend" className="w-full max-w-[720px] rounded-xl bg-surface px-5 py-3.5 shadow-[0_1px_2px_rgba(14,17,22,0.06)]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <p className="flex-1 text-[13px] font-medium text-ink-2">Each line is highlighted by how far it goes beyond your profile</p>
+        <button type="button" role="switch" aria-checked={highlights} onClick={onToggle} className="min-h-8 text-[13px] font-medium text-accent">
+          {highlights ? "Hide highlights" : "Show highlights"}
+        </button>
+      </div>
+      <ul className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+        {AMBITION.map((a) => (
+          <li key={a.level} className={cx("flex items-start gap-2 text-[13px] leading-snug", a.level > chosen && !counts[a.level] && "opacity-50")}>
+            <span aria-hidden="true" className={cx("mt-[3px] size-3 shrink-0 rounded-[3px]", SWATCH[a.level])} />
+            <span>
+              <span className="font-semibold">{a.name}</span> <span className="font-mono text-xs text-muted">{counts[a.level]}</span>
+              <span className="block text-muted">{a.line}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {anyAbove && highlights && (
+        <p className="mt-2 flex items-center gap-2 text-[13px] text-ink-2">
+          <span aria-hidden="true" className="h-3 w-5 shrink-0 rounded-[3px] outline-[1.5px] outline-[#b42318] outline-dashed" />
+          Dashed outline: above the {ambitionName(chosen)} level you chose for this application
+        </p>
+      )}
+    </section>
   );
 }
 

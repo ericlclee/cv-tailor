@@ -1,4 +1,5 @@
 import "server-only";
+import { toAmbition, type Ambition, type CvRating } from "./ambition";
 import { newId, type Master } from "./db";
 import { formatRange } from "./format";
 import { normalize } from "./keywords";
@@ -57,15 +58,16 @@ export function unsupportedNumbers(text: string, sources: string[]) {
 export interface CvPlan {
   headline: string;
   summary: string;
+  summaryAmbition?: number;
   sectionOrder: EntryKind[];
   skills: { category: string; items: string[] }[];
-  entries: { entryId: string; include: boolean; bullets: { text: string; sourceIds: string[] }[] }[];
+  entries: { entryId: string; include: boolean; bullets: { text: string; sourceIds: string[]; ambition?: number }[] }[];
 }
 
 /**
  * Turn a plan into CV content. Titles, employers and dates always come from the
- * profile; bullets keep links to their source achievements; skills the profile
- * doesn't show are dropped; numbers missing from the sources are flagged.
+ * profile; bullets keep links to their source achievements and the writer's rating;
+ * numbers missing from the sources are flagged.
  */
 export function buildCvFromPlan(m: Master, out: CvPlan) {
   const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a])));
@@ -80,29 +82,47 @@ export function buildCvFromPlan(m: Master, out: CvPlan) {
     const bullets: CvBullet[] = p.bullets.map((b) => {
       const sourceIds = b.sourceIds.filter((id) => achievements.has(id));
       sourceIds.forEach((id) => used.add(id));
-      return { id: newId(), text: b.text, sourceIds, include: true, warning: sourceIds.length ? undefined : "Not linked to anything in your profile. Check it's accurate." };
+      return { id: newId(), text: b.text, sourceIds, include: true, ambition: toAmbition(b.ambition, 0), warning: sourceIds.length ? undefined : UNLINKED_WARNING };
     });
     return { include: p.include, bullets: [...bullets, ...unusedBullets(e, used)] };
   });
 
   const known = new Set(m.skills.map((s) => normalize(s.name).trim()));
   const evidence = normalize(m.entries.flatMap((e) => e.achievements.flatMap((a) => [a.text, ...a.skills])).join(" "));
-  const removedSkills: string[] = [];
-  const skills = out.skills
-    .map((g) => ({
-      category: g.category,
-      items: g.items.filter((i) => {
-        const ok = known.has(normalize(i).trim()) || evidence.includes(normalize(i));
-        if (!ok) removedSkills.push(i);
-        return ok;
-      }),
-    }))
-    .filter((g) => g.items.length);
+  // Skills the profile doesn't show stay on the CV; they're reported so the user can prepare for them.
+  const unbackedSkills = out.skills.flatMap((g) => g.items).filter((i) => !known.has(normalize(i).trim()) && !evidence.includes(normalize(i)));
+  const skills = out.skills.filter((g) => g.items.length);
 
-  const content: CvContent = { header: header(m, out.headline), summary: out.summary, skills, sections };
+  const content: CvContent = { header: header(m, out.headline), summary: out.summary, summaryAmbition: toAmbition(out.summaryAmbition, 0), skills, sections };
   flagNumbers(content, achievements);
-  return { content, achievements, removedSkills };
+  return { content, achievements, unbackedSkills };
 }
+
+/**
+ * Rate every line of a CV. The writer's own rating is the starting point, raised to what
+ * the checks can see: a line with no source is Bold, and a number the sources don't
+ * contain makes a line at least Elevated. Skills no achievement shows are Bold.
+ */
+export function rateCv(content: CvContent, m: Master): CvRating {
+  const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a.text] as const)));
+  const allText = [...achievements.values()];
+  const raise = (declared: Ambition | undefined, floor: Ambition) => Math.max(declared ?? 0, floor) as Ambition;
+  const bullets: CvRating["bullets"] = {};
+  for (const s of content.sections)
+    for (const i of s.items)
+      for (const b of i.bullets) {
+        const floor = !b.sourceIds.length ? 3 : unsupportedNumbers(b.text, b.sourceIds.map((id) => achievements.get(id) ?? "")).length ? 2 : 0;
+        bullets[b.id] = raise(b.ambition, floor);
+      }
+  const summary = raise(content.summaryAmbition, unsupportedNumbers(content.summary, allText).length ? 2 : 0);
+  const known = new Set(m.skills.map((s) => normalize(s.name).trim()));
+  const evidence = normalize(m.entries.flatMap((e) => e.achievements.flatMap((a) => [a.text, ...a.skills])).join(" "));
+  const skills: CvRating["skills"] = {};
+  for (const item of content.skills.flatMap((g) => g.items)) if (!known.has(normalize(item).trim()) && !evidence.includes(normalize(item))) skills[item] = 3;
+  return { bullets, summary, skills };
+}
+
+export const UNLINKED_WARNING = "Not linked to your profile. Be ready to back this up in an interview.";
 
 /** Flag included bullets whose numbers don't appear in their sources. */
 export function flagNumbers(content: CvContent, achievements: Map<string, { text: string }>) {
@@ -111,6 +131,6 @@ export function flagNumbers(content: CvContent, achievements: Map<string, { text
       for (const b of i.bullets) {
         if (!b.include || !b.sourceIds.length) continue;
         const nums = unsupportedNumbers(b.text, b.sourceIds.map((id) => achievements.get(id)?.text ?? ""));
-        if (nums.length) b.warning = `Contains ${nums.join(", ")}, which isn't in your profile. Check it's accurate.`;
+        if (nums.length) b.warning = `Uses ${nums.join(", ")}, which isn't in your profile. Be ready to explain how you got it.`;
       }
 }

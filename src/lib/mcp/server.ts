@@ -2,6 +2,7 @@ import "server-only";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { tracker } from "../activity";
+import { AMBITION, ambitionName, toAmbition, type Ambition, type CvRating } from "../ambition";
 import { addEvent, changeStatus, createApplication, getApplication, listApplications, saveJob, STATUS_LABEL } from "../applications";
 import { masterForPrompt, refreshSuggestions } from "../coach";
 import { applyEdits, prepareEdits } from "../cv-edits";
@@ -11,7 +12,7 @@ import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount } from "../requirements";
 import { profileStrength } from "../strength";
-import { buildCvFromPlan, flagNumbers } from "../tailor";
+import { buildCvFromPlan, flagNumbers, rateCv, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
@@ -24,27 +25,29 @@ export const appUrl = () => {
   return (process.env.APP_URL || (vercel ? `https://${vercel}` : "http://localhost:3000")).replace(/\/$/, "");
 };
 
-const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into honest, ATS-friendly CVs. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
+const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
 
 Workflow:
 1. Start with get_overview. If the profile is empty, ask the user for their CV (they can attach it to the chat) and record it with update_profile.
 2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
 3. When the user shares a job (link or text), call create_application, then read the description and call set_job_details with the real requirements.
 4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile. If not, call mark_not_claimed.
-5. Write the CV yourself and save it with save_cv. Then refine it with edit_cv when the user asks.
+5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Polished unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
 6. Keep the application current with update_application (applied, interview dates, outcome, notes).
 
-Honesty rules (most important):
-- Use only facts the user told you or that are already in their profile. Never invent or inflate numbers, tools, scope, titles or outcomes. Keep estimates as estimates ("about 30%").
-- Every CV bullet must cite the achievement ids it is based on. The server flags numbers that aren't in the cited sources and drops skills the profile doesn't show.
-- Never claim a requirement the user said they don't have.
+Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level and never above it unless the user asks.
+${AMBITION.map((a) => `- ${a.level} ${a.name}: ${a.writer}`).join("\n")}
+Rate every bullet and the summary you write on the same 0–3 scale (0 same facts as its sources, 1 stronger wording, 2 broader scope or ownership or rounded numbers, 3 a figure, outcome or claim the profile doesn't contain). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up, and the server raises a rating it can see is too low.
+Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
+Every CV bullet must cite the achievement ids it is based on.
 
-Writing: one-sentence achievements with a strong past-tense verb (present tense for current roles), what they did and the result, no first person. Mirror the job's exact terms where they are true.
+Writing: one-sentence achievements with a strong past-tense verb (present tense for current roles), what they did and the result, no first person.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const json = (v: unknown) => text(JSON.stringify(v, null, 1));
+const ambitionLevel = z.number().int().min(0).max(3);
 const fail = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
 
 function appLink(id: string, tab?: "cv" | "timeline") {
@@ -58,10 +61,11 @@ async function needApp(id: string) {
 }
 
 /** Plain view of a CV with the ids the edit tools need. */
-function cvView(content: CvContent) {
+function cvView(content: CvContent, rating: CvRating) {
   return {
     headline: content.header.headline,
     summary: content.summary,
+    summaryAmbition: ambitionName(rating.summary),
     skills: content.skills,
     sections: content.sections
       .filter((s) => s.include)
@@ -73,7 +77,7 @@ function cvView(content: CvContent) {
             itemId: i.id,
             role: [i.title, i.organization].filter(Boolean).join(", "),
             dates: i.dates,
-            bullets: i.bullets.filter((b) => b.include).map((b) => ({ bulletId: b.id, text: b.text, sourceIds: b.sourceIds, ...(b.warning ? { warning: b.warning } : {}) })),
+            bullets: i.bullets.filter((b) => b.include).map((b) => ({ bulletId: b.id, text: b.text, sourceIds: b.sourceIds, ambition: ambitionName(rating.bullets[b.id] ?? 0), ...(b.warning ? { warning: b.warning } : {}) })),
           })),
       })),
   };
@@ -89,6 +93,17 @@ function cvWarnings(content: CvContent, unclaimed: string[]) {
   }
   return out;
 }
+
+/** How a CV's lines spread across the levels, and which go above the application's level. */
+function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition) {
+  const lines = content.sections.flatMap((s) => (s.include ? s.items.flatMap((i) => (i.include ? i.bullets.filter((b) => b.include) : [])) : []));
+  const counts = Object.fromEntries(AMBITION.map((a) => [a.name, lines.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length]));
+  const above = lines.filter((b) => (rating.bullets[b.id] ?? 0) > chosen).map((b) => ({ bulletId: b.id, text: b.text, ambition: ambitionName(rating.bullets[b.id]) }));
+  if (rating.summary > chosen) above.push({ bulletId: "summary", text: content.summary, ambition: ambitionName(rating.summary) });
+  return { chosen: ambitionName(chosen), lines: counts, aboveChosenLevel: above.length ? above : undefined, skillsBeyondProfile: Object.keys(rating.skills).length ? Object.keys(rating.skills) : undefined };
+}
+
+const ambitionSetting = (l: Ambition) => ({ level: l, name: ambitionName(l), howToWrite: AMBITION[l].writer });
 
 const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
 
@@ -152,14 +167,16 @@ export function createMcpServer() {
       const m = await getMaster();
       const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
       const cv = job.cvId ? await get("cvs", job.cvId) : null;
+      const rating = cv ? rateCv(cv.content, m) : null;
       return json({
         id: job.id,
         status: STATUS_LABEL[job.status],
+        ambition: ambitionSetting(job.ambition),
         job: job.parsed,
         source: job.url || "pasted description",
         requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
         notClaimed: job.unclaimed,
-        cv: cv ? { ...cvView(cv.content), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
+        cv: cv && rating ? { ...cvView(cv.content, rating), ambition: ambitionReport(cv.content, rating, job.ambition), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
         timeline: job.events.map((e) => ({ at: e.at, title: e.title, detail: e.detail })),
         notes: job.notes,
         links: { view: appLink(job.id), cv: appLink(job.id, "cv"), ...(cv ? { pdf: `${appUrl()}/api/cvs/${cv.id}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cv.id}/export?format=docx` } : {}) },
@@ -471,18 +488,25 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). You choose which entries and achievements to use and reword them for the job; titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources, drops skills the profile doesn't show, and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and reword them for the job; titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
-        headline: z.string().describe("Short professional headline, truthful to the profile"),
+        headline: z.string().describe("Short professional headline aimed at this job"),
         summary: z.string().describe("2–4 sentence summary aimed at this job, no first person"),
+        summaryAmbition: ambitionLevel.describe("Your 0–3 ambition rating of the summary"),
         skills: z.array(z.object({ category: z.string(), items: z.array(z.string()) })),
         sectionOrder: z.array(entryKind).describe("Usually experience first; projects or education first for students and career changers"),
         entries: z.array(
           z.object({
             entryId: z.string(),
             include: z.boolean().optional().describe("false hides the entry"),
-            bullets: z.array(z.object({ text: z.string(), sourceIds: z.array(z.string()).describe("Achievement ids this bullet is based on") })),
+            bullets: z.array(
+              z.object({
+                text: z.string(),
+                sourceIds: z.array(z.string()).describe("Achievement ids this bullet is based on"),
+                ambition: ambitionLevel.describe("Your 0–3 rating of how far this line goes beyond its sources"),
+              }),
+            ),
           }),
         ),
       },
@@ -492,7 +516,7 @@ export function createMcpServer() {
       const m = await getMaster();
       if (!m.entries.length) return fail("The master profile is empty. Build it first with update_profile.");
       const unknown = i.entries.filter((e) => !m.entries.some((x) => x.id === e.entryId)).map((e) => e.entryId);
-      const { content, removedSkills } = buildCvFromPlan(m, { ...i, entries: i.entries.map((e) => ({ ...e, include: e.include ?? true })) });
+      const { content, unbackedSkills } = buildCvFromPlan(m, { ...i, entries: i.entries.map((e) => ({ ...e, include: e.include ?? true })) });
 
       const t = tracker();
       const existing = job.cvId ? await get("cvs", job.cvId) : null;
@@ -500,31 +524,33 @@ export function createMcpServer() {
       await t.doc("cvs", cvId);
       await t.doc("jobs", job.id);
       const now = new Date().toISOString();
-      await put("cvs", { id: cvId, jobId: job.id, name: [job.parsed.title, job.parsed.company].filter(Boolean).join(" · ") || "Tailored CV", content, notes: [], createdAt: existing?.createdAt ?? now, updatedAt: now });
+      await put("cvs", { id: cvId, jobId: job.id, name: [job.parsed.title, job.parsed.company].filter(Boolean).join(" · ") || "Tailored CV", content, notes: [], ambition: job.ambition, createdAt: existing?.createdAt ?? now, updatedAt: now });
       job.cvId = cvId;
       if (job.status === "saved") changeStatus(job, "cv", "Written in your chat and checked against your evidence.");
       await saveJob(job);
 
       const warnings = cvWarnings(content, job.unclaimed);
+      const ambition = ambitionReport(content, rateCv(content, m), job.ambition);
       const report = keywordReport(cvPlainText(content), job.parsed);
       const bullets = content.sections.flatMap((s) => (s.include ? s.items.flatMap((x) => (x.include ? x.bullets.filter((b) => b.include) : [])) : [])).length;
       await t.record({
         kind: "cv",
         summary: existing ? "Rewrote the CV" : "Drafted the CV",
         appId: job.id,
-        details: [{ label: "CV", after: `${bullets} bullets · ${report.matched.length} of ${report.matched.length + report.missing.length} job keywords${warnings.length ? ` · ${warnings.length} to check` : ""}` }],
+        details: [{ label: "CV", after: `${bullets} bullets at ${ambition.chosen} · ${report.matched.length} of ${report.matched.length + report.missing.length} job keywords${warnings.length ? ` · ${warnings.length} to check` : ""}` }],
       });
       return json({
         saved: true,
         bullets,
         keywordCoverage: `${report.score}%`,
         missingMustHaves: report.mustHaveMissing,
+        ambition,
         warnings,
-        droppedSkills: removedSkills.length ? `${removedSkills.join(", ")} (not shown anywhere in the profile)` : undefined,
+        skillsToPrepare: unbackedSkills.length ? `${unbackedSkills.join(", ")} (kept on the CV, but no achievement shows them yet)` : undefined,
         unknownEntryIds: unknown.length ? unknown : undefined,
-        cv: cvView(content),
+        cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: warnings.length ? "Mention the flagged lines and ask whether they're accurate." : "Point them to the CV tab to review and download.",
+        tellTheUser: `${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -533,12 +559,13 @@ export function createMcpServer() {
     "edit_cv",
     {
       title: "Edit CV",
-      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds for new or rewritten bullets so they can be checked.",
+      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted.",
       inputSchema: {
         application_id: z.string(),
         summary_of_change: z.string().describe("A few words for the activity feed, e.g. 'Shortened Brightcart'"),
         headline: z.string().optional(),
         summary: z.string().optional(),
+        summaryAmbition: ambitionLevel.optional().describe("0–3 rating of a new summary"),
         edits: z
           .array(
             z.object({
@@ -547,6 +574,7 @@ export function createMcpServer() {
               itemId: z.string().optional().describe("For add: the CV item (role) id"),
               text: z.string().optional(),
               sourceIds: z.array(z.string()).optional(),
+              ambition: ambitionLevel.optional().describe("For replace and add: your 0–3 rating of the new line"),
             }),
           )
           .optional(),
@@ -556,7 +584,7 @@ export function createMcpServer() {
       const job = await needApp(i.application_id);
       const cv = job.cvId ? await get("cvs", job.cvId) : null;
       if (!cv) return fail("This application has no CV yet. Write one with save_cv.");
-      const edits = prepareEdits(cv.content, (i.edits ?? []).map((e) => ({ op: e.op, bulletId: e.bulletId, itemId: e.itemId, text: e.text })));
+      const edits = prepareEdits(cv.content, (i.edits ?? []).map((e) => ({ op: e.op, bulletId: e.bulletId, itemId: e.itemId, text: e.text, ambition: toAmbition(e.ambition, 0) })));
       if (!edits.length && i.headline === undefined && i.summary === undefined) return fail("None of those edits matched bullets or items in the CV. Check the ids with get_application.");
 
       const t = tracker();
@@ -572,18 +600,21 @@ export function createMcpServer() {
           for (const b of it.bullets) {
             const src = sourcesByText.get(b.text.trim());
             if (src) b.sourceIds = src.filter((id) => achievements.has(id));
-            if (b.include && !b.sourceIds.length && edits.some((e) => e.text?.trim() === b.text.trim())) b.warning = "Not linked to anything in your profile. Check it's accurate.";
+            if (b.include && !b.sourceIds.length && edits.some((e) => e.text?.trim() === b.text.trim())) b.warning = UNLINKED_WARNING;
           }
       flagNumbers(content, achievements);
       if (i.headline !== undefined) content.header.headline = i.headline;
-      if (i.summary !== undefined) content.summary = i.summary;
+      if (i.summary !== undefined) {
+        content.summary = i.summary;
+        content.summaryAmbition = toAmbition(i.summaryAmbition, 0);
+      }
       await put("cvs", { ...cv, content, updatedAt: new Date().toISOString() });
 
       const details: ActivityDetail[] = edits.map((e) => ({ label: e.op === "add" ? "Added line" : e.op === "remove" ? "Removed line" : "Rewrote line", before: e.previous, after: e.op === "remove" ? undefined : e.text }));
       if (i.summary !== undefined) details.push({ label: "Summary", before: cv.content.summary, after: i.summary });
       if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
       await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
-      return json({ saved: true, applied: details.length, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 
@@ -595,13 +626,14 @@ export function createMcpServer() {
     "update_application",
     {
       title: "Update application",
-      description: "Track what happened: move the stage (applied, interview, offer, rejected, withdrawn), add a dated timeline event (e.g. an interview time), or save notes (recruiter name, salary band).",
+      description: "Track what happened: move the stage (applied, interview, offer, rejected, withdrawn), add a dated timeline event (e.g. an interview time), save notes (recruiter name, salary band), or set the CV's ambition level when the user chooses one.",
       inputSchema: {
         application_id: z.string(),
         status: z.enum(STATUSES).optional(),
         status_detail: z.string().optional().describe("One sentence for the timeline"),
         event: z.object({ title: z.string(), detail: z.string().optional(), date: z.string().optional().describe("ISO date or date-time") }).optional(),
         note: z.string().optional().describe("Appended to the application's notes"),
+        ambition: z.enum(["Faithful", "Polished", "Elevated", "Bold"]).optional().describe("The ambition level the user chose for this application's CV"),
       },
     },
     async (i) => {
@@ -629,10 +661,15 @@ export function createMcpServer() {
         job.notes = [job.notes, i.note.trim()].filter(Boolean).join("\n");
         details.push({ label: "Note", after: i.note.trim() });
       }
+      if (i.ambition && toAmbition(i.ambition) !== job.ambition) {
+        details.push({ label: "Ambition", before: ambitionName(job.ambition), after: i.ambition });
+        parts.push(`Ambition: ${i.ambition}`);
+        job.ambition = toAmbition(i.ambition);
+      }
       if (!details.length) return fail("Nothing to update.");
       await saveJob(job);
       await t.record({ kind: "status", summary: parts.join(" · ") || "Added a note", appId: job.id, details });
-      return text(`Updated. Timeline: ${appLink(job.id, "timeline")}`);
+      return text(`Updated. Timeline: ${appLink(job.id, "timeline")}${i.ambition && job.cvId ? `\nThe CV was written at a different level. Offer to rewrite it at ${i.ambition} with save_cv.` : ""}`);
     },
   );
 

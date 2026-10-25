@@ -1,11 +1,11 @@
 # CV Tailor
 
-Keep an honest record of your career, tailor an ATS-friendly CV for every job, and track each application, **by talking to your own AI chat**.
+Keep a record of your whole career, tailor a standout, ATS-friendly CV for every job, and track each application, **by talking to your own AI chat**.
 
 CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
 
 - **Your chat app** (Claude Desktop, Claude Code, claude.ai, ChatGPT…) does the thinking and writing, on your own plan. No AI API key needed.
-- **CV Tailor** stores your profile and applications, reads job links, checks every CV line against your evidence, and shows everything live in the browser. There you can edit, undo, and download PDF or DOCX.
+- **CV Tailor** stores your profile and applications, reads job links, flags CV lines you'll need to back up in an interview, and shows everything live in the browser. There you can edit, undo, and download PDF or DOCX.
 
 ![The CV view: a tailored CV in the middle, applications on the left, and the activity feed of changes made from the chat on the right](docs/cv.png)
 
@@ -13,11 +13,11 @@ CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
 
 - **Master profile as an evidence bank.** Every role, project and achievement is stored once and reused for every job. Your chat asks questions to fill gaps: missing numbers, thin roles, skills you list but never show.
 - **Requirement-to-evidence matching.** Paste a job link (Greenhouse, Lever, Ashby, Workday, most career pages) or the description. Each requirement shows the achievements that prove it, or a gap to talk through.
-- **Honest CVs.** Your chat writes the CV, and CV Tailor checks it before saving:
+- **Ambition levels.** For each application you choose how far the CV goes beyond your profile: **Faithful** (your profile, reworded), **Polished** (stronger wording, same facts), **Elevated** (ownership of work you drove, broader scope, numbers rounded in your favour) or **Bold** (stronger figures and outcomes you could argue in an interview). Your chat writes to that level and rates every line it writes. The CV tab highlights each line by its rating, with a legend, and outlines any line above the level you chose. Highlights never appear in the PDF or DOCX.
+- **Checks on every CV.** CV Tailor checks the CV before saving:
   - titles, employers and dates always come from your profile;
-  - numbers that aren't in the cited evidence are flagged;
-  - bullets with no evidence are flagged;
-  - skills your profile doesn't show are dropped;
+  - numbers and bullets that go beyond your profile are flagged, so you can prepare to back them up in an interview;
+  - skills your profile doesn't show are kept, and listed for you to prepare;
   - requirements you said you lack are never claimed.
 - **ATS-friendly export.** A single-column layout with standard headings and real text, as PDF or DOCX.
 - **Application tracking.** A stage for each job (Saved → CV → Applied → Interview → Offer), with a dated timeline and notes, kept up to date from your chat.
@@ -139,15 +139,15 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 | `set_job_details` | Record the job's requirements as read by your chat |
 | `get_application` | Requirements with the evidence behind each, the CV with ids, timeline, notes, download links |
 | `mark_not_claimed` | Requirements you don't have; the CV never claims them |
-| `save_cv` | Save a CV your chat wrote. Every bullet must cite achievement ids |
+| `save_cv` | Save a CV your chat wrote. Every bullet cites achievement ids and carries an ambition rating |
 | `edit_cv` | Replace, remove or add bullets; change headline or summary |
-| `update_application` | Stage changes, dated timeline events, notes |
+| `update_application` | Stage changes, dated timeline events, notes, and the CV's ambition level |
 
-**Honesty checks on every CV** (`src/lib/tailor.ts`):
+**Checks on every CV** (`src/lib/tailor.ts`). They flag lines to prepare for; they don't block anything:
 - Titles, employers and dates come from the profile, never from the chat.
 - Numbers that aren't in a bullet's cited sources are flagged.
 - Bullets with no sources are flagged.
-- Skills the profile doesn't show are dropped.
+- Skills the profile doesn't show are listed.
 - A requirement you said you lack is flagged if it appears.
 
 The warnings go back to your chat and appear in the CV view.

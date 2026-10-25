@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+const level = z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]);
 const kind = z.enum(["experience", "project", "education", "volunteer", "certification", "award", "publication"]);
 
 export const cvContentSchema = z.object({
@@ -12,6 +13,7 @@ export const cvContentSchema = z.object({
     links: z.array(z.object({ label: z.string(), url: z.string() })),
   }),
   summary: z.string(),
+  summaryAmbition: level.optional(),
   skills: z.array(z.object({ category: z.string(), items: z.array(z.string()) })),
   sections: z.array(
     z.object({
@@ -29,7 +31,7 @@ export const cvContentSchema = z.object({
           dates: z.string(),
           include: z.boolean(),
           bullets: z.array(
-            z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()), include: z.boolean(), warning: z.string().optional() }),
+            z.object({ id: z.string(), text: z.string(), sourceIds: z.array(z.string()), include: z.boolean(), warning: z.string().optional(), ambition: level.optional() }),
           ),
         }),
       ),

@@ -20,7 +20,7 @@ export function applyEdits(cv: CvContent, edits: CvEdit[]): CvContent {
     for (const s of next.sections) {
       for (const it of s.items) {
         if (e.op === "add" && it.id === e.itemId) {
-          it.bullets.push({ id: newId(), text: e.text!, sourceIds: [], include: true });
+          it.bullets.push({ id: newId(), text: e.text!, sourceIds: [], include: true, ambition: e.ambition });
           it.include = true;
         }
         for (const b of it.bullets) {
@@ -30,6 +30,7 @@ export function applyEdits(cv: CvContent, edits: CvEdit[]): CvContent {
             b.text = e.text!;
             b.include = true;
             b.warning = undefined;
+            b.ambition = e.ambition;
           }
         }
       }

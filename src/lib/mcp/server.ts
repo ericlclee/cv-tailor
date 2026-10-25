@@ -6,14 +6,14 @@ import { AMBITION, ambitionName, toAmbition, type Ambition, type CvRating } from
 import { addEvent, changeStatus, createApplication, getApplication, listApplications, saveJob, STATUS_LABEL } from "../applications";
 import { masterForPrompt, refreshSuggestions } from "../coach";
 import { applyEdits, prepareEdits } from "../cv-edits";
-import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills } from "../db";
+import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills, type Master } from "../db";
 import { entryKind, extractMetrics, toAchievement, toEntry } from "../entries";
 import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount } from "../requirements";
 import { profileStrength } from "../strength";
-import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, UNLINKED_WARNING } from "../tailor";
-import type { ActivityDetail, AppStatus, CvContent, Entry } from "../types";
+import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
+import type { ActivityDetail, AppStatus, CvContent, Entry, ParsedJob } from "../types";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
 // writing; these tools read and change the data, check CVs against the
@@ -35,9 +35,10 @@ Workflow:
 5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Elevated unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
 6. Keep the application current with update_application (applied, interview dates, outcome, notes).
 
-Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level and never above it unless the user asks.
-${AMBITION.map((a) => `- ${a.level} ${a.name}: ${a.writer}`).join("\n")}
-Rate every bullet and the summary you write on the same 0–3 scale (0 the profile's facts, reframed; 1 numbers pushed up or natural responsibilities added; 2 a clearly more senior version: inflated scope or numbers, initiatives led, adjacent skills; 3 model-candidate content: achievements, figures or responsibilities written for the ideal hire). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up, and the server raises a rating it can see is too low.
+Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level, never below it and never above it unless the user asks.
+Calibrate to the role before writing at Polished or above: sketch, for yourself, the top candidate for this job. What scale do they work at (users, revenue, clients, team size)? What seniority markers do they show (strategy, standards across teams, hiring, external stakeholders)? What results would their CV quote? The levels are measured as how much of the gap between the user's profile and that candidate the CV closes. A user who is already close to the role still gets written up to the candidate.
+${AMBITION.map((a) => `- ${a.level} ${a.name}: ${a.writer} Required: ${a.requires}`).join("\n")}
+Rate every bullet and the summary you write on the same 0–3 scale (0 the profile's facts, reframed; 1 numbers pushed up or natural responsibilities added; 2 a clearly more senior version: inflated scope or numbers, initiatives led, adjacent skills; 3 model-candidate content: achievements, figures or responsibilities written for the ideal hire). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up. The server raises a rating it can see is too low, and flags underpowered lines (more than one level below the chosen level, or missing what the level requires) to raise with edit_cv.
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
 Every CV bullet must cite the achievement ids it is based on.
 
@@ -103,12 +104,24 @@ function cvWarnings(content: CvContent, unclaimed: string[]) {
 }
 
 /** How a CV's lines spread across the levels, and which go above the application's level. */
-function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition) {
+function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition, m: Master, job: { parsed: ParsedJob; unclaimed: string[] }) {
   const lines = content.sections.flatMap((s) => (s.include ? s.items.flatMap((i) => (i.include ? i.bullets.filter((b) => b.include) : [])) : []));
   const counts = Object.fromEntries(AMBITION.map((a) => [a.name, lines.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length]));
   const above = lines.filter((b) => (rating.bullets[b.id] ?? 0) > chosen).map((b) => ({ bulletId: b.id, text: b.text, ambition: ambitionName(rating.bullets[b.id]) }));
   if (rating.summary > chosen) above.push({ bulletId: "summary", text: content.summary, ambition: ambitionName(rating.summary) });
-  return { chosen: ambitionName(chosen), lines: counts, aboveChosenLevel: above.length ? above : undefined, skillsBeyondProfile: Object.keys(rating.skills).length ? Object.keys(rating.skills) : undefined };
+  const weak = underpowered(content, rating, chosen, m);
+  // At Bold every must-have the user's work touches should be covered.
+  const unclaimed = new Set(job.unclaimed.map((u) => u.toLowerCase()));
+  const uncovered = chosen === 3 ? keywordReport(cvPlainText(content), job.parsed).mustHaveMissing.filter((t) => !unclaimed.has(t.toLowerCase())) : [];
+  return {
+    chosen: ambitionName(chosen),
+    required: AMBITION[chosen].requires,
+    lines: counts,
+    underpowered: weak.length ? weak : undefined,
+    uncoveredMustHaves: uncovered.length ? uncovered : undefined,
+    aboveChosenLevel: above.length ? above : undefined,
+    skillsBeyondProfile: Object.keys(rating.skills).length ? Object.keys(rating.skills) : undefined,
+  };
 }
 
 const ambitionSetting = (l: Ambition) => ({ level: l, name: ambitionName(l), howToWrite: AMBITION[l].writer });
@@ -184,7 +197,7 @@ export function createMcpServer() {
         source: job.url || "pasted description",
         requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
         notClaimed: job.unclaimed,
-        cv: cv && rating ? { ...cvView(cv.content, rating), ambition: ambitionReport(cv.content, rating, job.ambition), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
+        cv: cv && rating ? { ...cvView(cv.content, rating), ambition: ambitionReport(cv.content, rating, job.ambition, m, job), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
         timeline: job.events.map((e) => ({ at: e.at, title: e.title, detail: e.detail })),
         notes: job.notes,
         links: { view: appLink(job.id), cv: appLink(job.id, "cv"), ...(cv ? { pdf: `${appUrl()}/api/cvs/${cv.id}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cv.id}/export?format=docx` } : {}) },
@@ -540,7 +553,7 @@ export function createMcpServer() {
       const warnings = cvWarnings(content, job.unclaimed);
       const copied = nearCopies(content, m);
       const filler = buzzwords(content);
-      const ambition = ambitionReport(content, rateCv(content, m), job.ambition);
+      const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
       const report = keywordReport(cvPlainText(content), job.parsed);
       const bullets = content.sections.flatMap((s) => (s.include ? s.items.flatMap((x) => (x.include ? x.bullets.filter((b) => b.include) : [])) : [])).length;
       await t.record({
@@ -562,7 +575,7 @@ export function createMcpServer() {
         unknownEntryIds: unknown.length ? unknown : undefined,
         cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: `${copied.length || filler.length ? `Before showing the user, fix with edit_cv: ${[copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
+        tellTheUser: `${ambition.underpowered || ambition.uncoveredMustHaves || copied.length || filler.length ? `Before showing the user, fix with edit_cv: ${[ambition.underpowered && `${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""} (raise each to ${ambition.chosen}: ${ambition.required})`, ambition.uncoveredMustHaves && `must-haves not covered yet: ${ambition.uncoveredMustHaves.join(", ")} (add a line for each the user's work touches; ask the user about the rest)`, copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -628,7 +641,9 @@ export function createMcpServer() {
       await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
       const copied = nearCopies(content, m);
       const filler = buzzwords(content);
-      return json({ saved: true, applied: details.length, ambition: ambitionReport(content, rateCv(content, m), job.ambition), copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
+      const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler"].filter(Boolean);
+      return json({ saved: true, applied: details.length, ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")}.` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

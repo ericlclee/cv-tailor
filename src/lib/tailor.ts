@@ -1,7 +1,7 @@
 import "server-only";
-import { toAmbition, type Ambition, type CvRating } from "./ambition";
+import { AMBITION, toAmbition, type Ambition, type CvRating } from "./ambition";
 import { newId, type Master } from "./db";
-import { formatRange } from "./format";
+import { formatRange, hasNumber } from "./format";
 import { normalize } from "./keywords";
 import { ENTRY_KINDS, type CvBullet, type CvContent, type CvSection, type Entry, type EntryKind } from "./types";
 
@@ -156,6 +156,33 @@ export function buzzwords(content: CvContent) {
   };
   check("summary", content.summary);
   for (const s of content.sections) for (const i of s.items) for (const b of i.bullets) if (b.include) check(b.id, b.text);
+  return out;
+}
+
+/**
+ * Lines that fall short of the chosen ambition level, as far as the server can tell:
+ * no figure at Polished or above; at Elevated or Bold, rated more than one level below
+ * the choice, or below it while only repeating the figures in its sources.
+ */
+export function underpowered(content: CvContent, rating: CvRating, chosen: Ambition, m: Master) {
+  if (chosen === 0) return [];
+  const achievements = new Map(m.entries.flatMap((e) => e.achievements.map((a) => [a.id, a.text] as const)));
+  const out: { bulletId: string; text: string; ambition: string; raise: string[] }[] = [];
+  for (const s of content.sections) {
+    if (!s.include) continue;
+    for (const i of s.items) {
+      if (!i.include) continue;
+      for (const b of i.bullets) {
+        if (!b.include) continue;
+        const level = rating.bullets[b.id] ?? 0;
+        const raise: string[] = [];
+        if (!hasNumber(b.text)) raise.push("add a figure");
+        if (chosen >= 2 && level < chosen - 1) raise.push(`rated ${AMBITION[level].name}, more than one level below ${AMBITION[chosen].name}`);
+        else if (chosen >= 2 && level < chosen && !unsupportedNumbers(b.text, b.sourceIds.map((id) => achievements.get(id) ?? "")).length) raise.push(`below ${AMBITION[chosen].name} and only repeats its source's figures`);
+        if (raise.length) out.push({ bulletId: b.id, text: b.text, ambition: AMBITION[level].name, raise });
+      }
+    }
+  }
   return out;
 }
 

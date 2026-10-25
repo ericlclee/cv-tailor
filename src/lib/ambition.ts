@@ -6,37 +6,42 @@ export type Ambition = 0 | 1 | 2 | 3;
 
 export const DEFAULT_AMBITION: Ambition = 2;
 
-// The master profile is the plain factual record. Every level reframes it for the job;
-// the levels differ in how far past the facts the framing goes, up to Bold: the CV a
-// model candidate for the role would have, built on the user's real background.
-export const AMBITION: { level: Ambition; name: string; line: string; setting: string; writer: string }[] = [
+// The master profile is the plain factual record. Every level reframes it for the job,
+// measured against the target: what a top hire for this role looks like. Faithful stays
+// with the user's facts; each level above closes more of the gap to that candidate.
+// `requires` is what every CV at that level must show; the server checks what it can.
+export const AMBITION: { level: Ambition; name: string; line: string; setting: string; writer: string; requires: string }[] = [
   {
     level: 0,
     name: "Faithful",
     line: "Your facts, framed for the job",
     setting: "Framed in the best light for this job, but every fact, number and scope stays exactly as your profile has it.",
     writer: "Frame each fact in its best light for this job: outcome first, the strongest verb the facts support, the job's own terms. Keep every number, scope and role exactly as the profile states it.",
+    requires: "Nothing beyond the profile.",
   },
   {
     level: 1,
     name: "Polished",
     line: "Numbers pushed up, natural responsibilities added",
-    setting: "Already stretches: numbers pushed up to impressive round figures, and the responsibilities that naturally come with your work (ownership, stakeholders, process, mentoring) claimed outright.",
-    writer: "Push numbers up to impressive round figures. Claim the responsibilities that naturally come with the user's work (ownership, stakeholder management, process, mentoring, decisions) even where the profile doesn't spell them out. Make every line sound accomplished.",
+    setting: "Already stretches: every line carries an impressive figure, numbers are pushed up, and the responsibilities that come with your work are claimed outright.",
+    writer: "Push every number up to an impressive round figure and claim the responsibilities that naturally come with the user's work (ownership, stakeholders, decisions, mentoring) outright. Close a third of the gap to the target candidate.",
+    requires: "Every bullet carries a figure (%, £, time, volume, users, team size); add a credible estimate where the profile has none.",
   },
   {
     level: 2,
     name: "Elevated",
-    line: "A level more senior: bigger scope and numbers",
-    setting: "Presents you a clear level more senior: bigger numbers, business-level scope and outcomes, leadership of initiatives you took part in, and adjacent experience and skills mapped onto every requirement.",
-    writer: "Present the user a clear level more senior. Inflate numbers and scope meaningfully; claim team and business outcomes and leadership of initiatives they took part in; state impact the work plausibly had; map adjacent experience and lightly used skills onto every requirement the job lists, in its exact terms.",
+    line: "A level more senior: bigger scope, impact and numbers",
+    setting: "Presents you a clear level more senior than your profile: business impact in money, time or scale on most lines, leadership and influence in every role, and adjacent experience mapped onto every requirement.",
+    writer: "Present the user a clear level more senior than the profile. Close two thirds of the gap to the target candidate: inflate scale and numbers meaningfully, state business impact (revenue, cost, time saved, risk, adoption), claim leadership of initiatives they took part in and influence beyond their team, and map adjacent experience and lightly used skills onto every requirement in the job's exact terms.",
+    requires: "Every bullet carries a figure and goes beyond its source (a bigger number, wider scope or a new outcome); most bullets state business impact; every role has at least one leadership or influence claim.",
   },
   {
     level: 3,
     name: "Bold",
-    line: "Model candidate: written for the ideal hire",
-    setting: "The CV a model candidate for this role would have, built on your real roles and the kind of work you do: every requirement covered with a convincing achievement, at the figures and responsibilities the role expects.",
-    writer: "Write the CV of a model candidate for this role, built on the user's real roles and the kind of work they actually do. Cover every requirement with a convincing achievement; use the figures, scope and responsibilities the role expects of a strong hire; list every skill the job asks for that the user's work touches. Each line should still grow out of something the user did, so they can talk around it in an interview.",
+    line: "The target candidate: written for the ideal hire",
+    setting: "Written as the top candidate for this role would be, built on your real roles and kind of work: every requirement covered, at the scale, seniority and results the role expects of its best hire.",
+    writer: "Write the user as the top candidate for this role. Use the target sketch: their scale, seniority markers (strategy, standards across teams, hiring, external clients) and the results they would show, and write every line at that level, grown out of the user's real roles and kind of work. Cover every must-have the user's work touches with a convincing achievement. Never settle for restating the profile with more confidence: if a line reads like the profile, it isn't Bold.",
+    requires: "Every bullet is written at the target candidate's level, with a figure at the scale the role expects; every role shows senior markers; every must-have the user's work touches is covered (ask the user about any it doesn't touch).",
   },
 ];
 

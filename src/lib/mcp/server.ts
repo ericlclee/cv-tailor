@@ -47,7 +47,8 @@ Keep chat replies short and point the user to the web app to see and download re
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const json = (v: unknown) => text(JSON.stringify(v, null, 1));
-const ambitionLevel = z.number().int().min(0).max(3);
+// Coerced: some chat clients send numbers as strings.
+const ambitionLevel = z.coerce.number().int().min(0).max(3);
 const fail = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
 
 function appLink(id: string, tab?: "cv" | "timeline") {

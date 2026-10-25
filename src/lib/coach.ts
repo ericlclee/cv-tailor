@@ -106,16 +106,24 @@ export function ruleSuggestions(m: Master): Suggestion[] {
   return out;
 }
 
-/** Sync rule-based questions into the store: add new ones, drop ones that no longer apply. */
+/**
+ * Sync rule-based questions into the store: add new ones, drop ones that no longer apply,
+ * and rewrite open ones whose wording changed (an edited achievement keeps its id, so
+ * its question would otherwise keep quoting the old text).
+ */
 export async function refreshSuggestions() {
   const m = await getMaster();
   const rules = ruleSuggestions(m);
   const ruleIds = new Set(rules.map((r) => r.id));
-  const existing = await list("suggestions");
-  const existingIds = new Set(existing.map((s) => s.id));
+  const existing = new Map((await list("suggestions")).map((s) => [s.id, s]));
+  const stale = (r: Suggestion) => {
+    const s = existing.get(r.id);
+    return s?.status === "open" && (s.question !== r.question || s.reason !== r.reason || s.entryId !== r.entryId);
+  };
   await Promise.all([
-    ...existing.filter((s) => s.id.startsWith("rule:") && s.status === "open" && !ruleIds.has(s.id)).map((s) => remove("suggestions", s.id)),
-    ...rules.filter((r) => !existingIds.has(r.id)).map((r) => put("suggestions", r)),
+    ...[...existing.values()].filter((s) => s.id.startsWith("rule:") && s.status === "open" && !ruleIds.has(s.id)).map((s) => remove("suggestions", s.id)),
+    ...rules.filter((r) => !existing.has(r.id)).map((r) => put("suggestions", r)),
+    ...rules.filter(stale).map((r) => put("suggestions", { ...existing.get(r.id)!, question: r.question, reason: r.reason, entryId: r.entryId })),
   ]);
   return openSuggestions();
 }

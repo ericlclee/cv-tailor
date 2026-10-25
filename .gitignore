@@ -44,3 +44,6 @@ next-env.d.ts
 /data
 .next-dev.log
 !.env.example
+
+# Built from src/mcp-app by scripts/build-mcp-app.mjs
+/src/lib/mcp/app-html.generated.ts

@@ -532,7 +532,7 @@ export function createMcpServer() {
       return json({
         saved: true,
         listing: "curated (stored; no need to do it again)",
-        ...(i.evidence ? {} : { evidence: "Not linked: requirements only match achievements that use the same words. Link them with link_requirements." }),
+        ...(Object.keys(job.evidence ?? {}).length ? {} : { evidence: "Not linked: requirements only match achievements that use the same words. Link them with link_requirements." }),
         backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
         gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
         weak: reqs.filter((r) => r.state === "weak").map((r) => r.name),

@@ -79,6 +79,8 @@ export interface ParsedJob {
   keywords: string[];
   yearsExperience: string;
   education: string;
+  /** As the listing states it, e.g. "£80k–£100k" (set when curated). */
+  salary?: string;
 }
 
 /** Where an application is. The first five are the forward track; the rest close it. */

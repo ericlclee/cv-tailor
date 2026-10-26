@@ -108,11 +108,12 @@ const PILL: Record<Requirement["state"], string> = {
 function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; role: string }) {
   const { job, requirements: reqs } = data;
   const [open, setOpen] = useState<string | null>(null);
-  const [showText, setShowText] = useState<"listing" | "original" | null>(null);
+  const [expanded, setExpanded] = useState(false);
   const backed = reqs.filter((r) => r.state === "proven" || r.state === "weak").length;
   const p = job.parsed;
   const curated = Boolean(job.curatedAt);
-  const shown = showText === "listing" && curated ? job.description : showText ? job.rawText : null;
+  // The rest of the listing, read as a continuation of the summary: the curated description, or the page text until then.
+  const fullText = (curated ? job.description : job.rawText)?.trim() ?? "";
 
   return (
     <DocBody>
@@ -130,25 +131,22 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
       <section className="flex flex-col gap-2.5 rounded-[14px] border border-line bg-surface px-6 py-5">
         <SectionLabel>The job · {job.url && job.source !== "Pasted" ? `read from ${job.source}` : "pasted description"}</SectionLabel>
         <p className="text-[22px] font-semibold tracking-tight">{p.title || "Untitled role"}</p>
-        <p className="text-[15px] text-ink-2">{[p.company, p.location, p.seniority, p.yearsExperience].filter(Boolean).join(" · ")}</p>
+        <p className="text-[15px] text-ink-2">{[p.company, p.location, p.seniority, p.salary, p.yearsExperience].filter(Boolean).join(" · ")}</p>
         {p.summary && <p className="text-[15px] leading-relaxed text-ink-2">{p.summary}</p>}
+        {expanded && <JobText text={fullText} />}
         <div className="flex flex-wrap gap-4 text-sm">
+          {fullText && (
+            <button type="button" aria-expanded={expanded} className="text-accent hover:underline" onClick={() => setExpanded(!expanded)}>
+              {expanded ? "Show less" : curated ? "Show full description" : "Show the page text"}
+            </button>
+          )}
           {job.url && (
             <a href={job.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
               Open the listing
             </a>
           )}
-          {curated && (
-            <button type="button" className="text-accent hover:underline" onClick={() => setShowText(showText === "listing" ? null : "listing")}>
-              {showText === "listing" ? "Hide" : "Show"} the job description
-            </button>
-          )}
-          <button type="button" className="text-accent hover:underline" onClick={() => setShowText(showText === "original" || (!curated && showText) ? null : "original")}>
-            {showText === "original" || (!curated && showText) ? "Hide" : "Show"} the {curated ? "original page text" : "full text"}
-          </button>
           {curated && <span className="text-muted">Curated by your chat {new Date(job.curatedAt!).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
         </div>
-        {shown && <pre className="mt-1 max-h-96 overflow-auto rounded-lg bg-paper p-4 font-sans text-sm leading-relaxed whitespace-pre-wrap text-ink-2">{shown}</pre>}
       </section>
 
       <section className="overflow-hidden rounded-[14px] border border-line bg-surface">
@@ -213,6 +211,35 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
         </ul>
       </section>
     </DocBody>
+  );
+}
+
+/**
+ * A job description in the same style as the summary above it: blank-line separated
+ * blocks, "- " (or •, *) lines as bullet lists, and short lines before them as headings.
+ */
+function JobText({ text }: { text: string }) {
+  const blocks = text.split(/\n\s*\n/).map((b) => b.split("\n").map((l) => l.trim()).filter(Boolean));
+  const bullet = /^[-•*]\s+/;
+  return (
+    <div className="flex flex-col gap-2.5 text-[15px] leading-relaxed text-ink-2">
+      {blocks.flatMap((lines, i) => {
+        const out: React.ReactNode[] = [];
+        let items: string[] = [];
+        const flush = (k: string) => {
+          if (items.length) out.push(<ul key={k} className="ml-5 list-disc space-y-1">{items.map((t, j) => <li key={j}>{t}</li>)}</ul>);
+          items = [];
+        };
+        lines.forEach((line, j) => {
+          if (bullet.test(line)) return void items.push(line.replace(bullet, ""));
+          flush(`${i}-${j}-list`);
+          const heading = line.split(/\s+/).length <= 5 && !/[.:,;]$/.test(line) && (lines.length > 1 || bullet.test(blocks[i + 1]?.[0] ?? ""));
+          out.push(heading ? <p key={`${i}-${j}`} className="font-semibold text-ink">{line}</p> : <p key={`${i}-${j}`}>{line}</p>);
+        });
+        flush(`${i}-end`);
+        return out;
+      })}
+    </div>
   );
 }
 

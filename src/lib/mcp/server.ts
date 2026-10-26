@@ -26,7 +26,7 @@ export const appUrl = () => {
 };
 
 // How the chat curates a listing: once per application, stored, then reused.
-const CURATE = `Curate the listing once: rewrite it as a clean job description in its own words, lightly tidied into short paragraphs and bullet lists. Keep the role title, company and team context, location and working pattern, salary if given, what the role does, responsibilities, requirements and nice-to-haves. Cut everything else: site navigation, cookie and privacy notices, apply and share links, other jobs, generic company boilerplate, benefits lists, and equal-opportunity or legal text. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Finally link each requirement to the user's achievements that genuinely show it (ids from the achievements list), judging meaning rather than wording: "evals" is shown by an achievement about building evaluators, "AI agents" by one about testing agent tool calls. Leave a requirement unlinked if nothing shows it. Save it all with set_job_details.`;
+const CURATE = `Curate the listing once. Put the title, company, location and working pattern, seniority and salary in their own fields, and a two-sentence summary of the role in summary. Then write the description: a trimmed job description of about 150–250 words that continues from the summary without repeating it or those fields. Use this shape: one short paragraph on the team and what the role owns (only if the summary doesn't already say it), then "Responsibilities" and "Requirements" (and "Nice to have" if the listing separates them) as short bullet lists, one line per bullet, each line starting with "- ". Use the listing's own words, shortened. Leave out company marketing ("who we are", mission, offices), sentences that say the same thing twice, perks and benefits, "apply even if you don't meet every requirement", site navigation, other jobs, and legal or equal-opportunity text. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Finally link each requirement to the user's achievements that genuinely show it (ids from the achievements list), judging meaning rather than wording: "evals" is shown by an achievement about building evaluators, "AI agents" by one about testing agent tool calls. Leave a requirement unlinked if nothing shows it. Save it all with set_job_details.`;
 
 const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
 
@@ -487,18 +487,19 @@ export function createMcpServer() {
         "Save the curated listing for an application: the cleaned-up job description and what the job asks for. Do this once per application (the server marks it done); call it again only if the user asks or the listing changed. mustHave and niceToHave are short ATS terms (1–4 words, the job's exact spelling, e.g. 'Python', 'stakeholder management'). These drive the requirement-to-evidence match.",
       inputSchema: {
         application_id: z.string(),
-        description: z.string().describe("The listing slimmed down to the job description itself: role, team and company context, location, salary, responsibilities, requirements. No navigation, cookie notices, benefits lists, other jobs or legal boilerplate."),
+        description: z.string().describe("The trimmed job description (about 150–250 words) that continues from the summary: a short paragraph on the role if needed, then Responsibilities and Requirements as one-line '- ' bullets. Title, company, location, salary and seniority go in their own fields, not here."),
         title: z.string(),
         company: z.string(),
-        location: z.string().optional(),
+        location: z.string().optional().describe("Location and working pattern, e.g. 'London or remote'"),
         seniority: z.string().optional(),
-        summary: z.string().optional().describe("Two sentences on what the role is about"),
+        summary: z.string().optional().describe("Two sentences on what the role is about; the description continues from it"),
         mustHave: z.array(z.string()),
         niceToHave: z.array(z.string()).optional(),
         keywords: z.array(z.string()).optional().describe("Other terms an ATS would scan for"),
         responsibilities: z.array(z.string()).optional(),
         yearsExperience: z.string().optional().describe("e.g. '5+ years', or empty"),
         education: z.string().optional(),
+        salary: z.string().optional().describe("As the listing states it, e.g. 'CA$250K–CA$535K'; empty if not given"),
         evidence: linkShape.optional().describe("For each requirement, the achievement ids that prove it (judge meaning, not wording)"),
       },
     },
@@ -519,6 +520,7 @@ export function createMcpServer() {
         responsibilities: i.responsibilities ?? [],
         yearsExperience: i.yearsExperience ?? "",
         education: i.education ?? "",
+        salary: i.salary ?? "",
       };
       const again = Boolean(job.curatedAt);
       job.description = i.description.trim();

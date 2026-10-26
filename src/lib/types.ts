@@ -111,6 +111,8 @@ export interface Job {
   description?: string;
   /** When the chat curated the listing; until then `parsed` is only a rough keyword guess. */
   curatedAt?: string;
+  /** Achievement ids the chat judged to prove each requirement, keyed by requirementKey(name). */
+  evidence?: Record<string, string[]>;
   parsed: ParsedJob | null;
   createdAt: string;
   status?: AppStatus;

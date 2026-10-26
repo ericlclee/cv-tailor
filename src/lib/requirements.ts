@@ -2,8 +2,10 @@ import { hasNumber } from "./format";
 import { containsTerm, normalize } from "./keywords";
 import type { Entry, ParsedJob, Skill } from "./types";
 
-// Links each job requirement to the achievements that prove it. Shared by the
-// match view, the chat context and the offline chat engine.
+// Links each job requirement to the achievements that prove it: the ones the chat
+// linked when it curated the listing (it judges meaning, so "evals" is proven by an
+// achievement about building evaluators), plus any whose words match the requirement,
+// which also catches achievements added since. Shared by the match view and the chat.
 
 export type ReqState = "proven" | "weak" | "gap" | "unclaimed";
 
@@ -14,6 +16,9 @@ export interface Requirement {
   note: string;
   proofs: { achievementId: string; text: string; role: string }[];
 }
+
+/** How a requirement is keyed in Job.evidence. */
+export const requirementKey = (name: string) => normalize(name).trim();
 
 function yearsOfExperience(entries: Entry[]) {
   let months = 0;
@@ -29,7 +34,7 @@ function yearsOfExperience(entries: Entry[]) {
   return Math.floor(months / 12);
 }
 
-export function analyzeRequirements(job: ParsedJob, entries: Entry[], skills: Skill[], unclaimed: string[] = []): Requirement[] {
+export function analyzeRequirements(job: ParsedJob, entries: Entry[], skills: Skill[], unclaimed: string[] = [], linked: Record<string, string[]> = {}): Requirement[] {
   const out: Requirement[] = [];
   const skipped = new Set(unclaimed.map((u) => normalize(u).trim()));
   const needYears = Number(job.yearsExperience.match(/\d+/)?.[0] ?? 0);
@@ -46,16 +51,17 @@ export function analyzeRequirements(job: ParsedJob, entries: Entry[], skills: Sk
   const seen = new Set<string>();
   const terms = [...job.mustHave.map((t) => [t, "Must"] as const), ...job.niceToHave.map((t) => [t, "Nice"] as const)];
   for (const [name, weight] of terms) {
-    const key = normalize(name).trim();
+    const key = requirementKey(name);
     if (!key || seen.has(key)) continue;
     seen.add(key);
     if (skipped.has(key)) {
       out.push({ name, weight, state: "unclaimed", note: "Won't claim", proofs: [] });
       continue;
     }
+    const chosen = new Set(linked[key] ?? []);
     const proofs = entries.flatMap((e) =>
       e.achievements
-        .filter((a) => containsTerm(normalize(`${a.text} ${a.skills.join(" ")}`), name))
+        .filter((a) => chosen.has(a.id) || containsTerm(normalize(`${a.text} ${a.skills.join(" ")}`), name))
         .map((a) => ({ achievementId: a.id, text: a.text, role: [e.title, e.organization].filter(Boolean).join(", ") })),
     );
     const listed = skills.some((s) => containsTerm(normalize(s.name), name));

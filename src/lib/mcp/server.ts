@@ -10,7 +10,7 @@ import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, 
 import { entryKind, extractMetrics, toAchievement, toEntry } from "../entries";
 import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
-import { analyzeRequirements, backedCount } from "../requirements";
+import { analyzeRequirements, backedCount, requirementKey } from "../requirements";
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry, ParsedJob } from "../types";
@@ -26,7 +26,7 @@ export const appUrl = () => {
 };
 
 // How the chat curates a listing: once per application, stored, then reused.
-const CURATE = `Curate the listing once: rewrite it as a clean job description in its own words, lightly tidied into short paragraphs and bullet lists. Keep the role title, company and team context, location and working pattern, salary if given, what the role does, responsibilities, requirements and nice-to-haves. Cut everything else: site navigation, cookie and privacy notices, apply and share links, other jobs, generic company boilerplate, benefits lists, and equal-opportunity or legal text. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Save it all with set_job_details.`;
+const CURATE = `Curate the listing once: rewrite it as a clean job description in its own words, lightly tidied into short paragraphs and bullet lists. Keep the role title, company and team context, location and working pattern, salary if given, what the role does, responsibilities, requirements and nice-to-haves. Cut everything else: site navigation, cookie and privacy notices, apply and share links, other jobs, generic company boilerplate, benefits lists, and equal-opportunity or legal text. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Finally link each requirement to the user's achievements that genuinely show it (ids from the achievements list), judging meaning rather than wording: "evals" is shown by an achievement about building evaluators, "AI agents" by one about testing agent tool calls. Leave a requirement unlinked if nothing shows it. Save it all with set_job_details.`;
 
 const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
 
@@ -34,7 +34,7 @@ Workflow:
 1. Start with get_overview. If the profile is empty, ask the user for their CV (they can attach it to the chat) and record it with update_profile.
 2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
 3. When the user shares a job (link or text), call create_application. If it says the listing needs curating, do it straight away: ${CURATE} Curation is stored with the application and marked done, so never repeat it for an application that's already curated (get_application says so) unless the user asks you to, or the listing has changed.
-4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile. If not, call mark_not_claimed.
+4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile, then link the new achievement to the requirement with link_requirements. If not, call mark_not_claimed.
 5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Elevated unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
 6. Keep the application current with update_application (applied, interview dates, outcome, notes).
 
@@ -129,6 +129,17 @@ function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition, 
 
 const ambitionSetting = (l: Ambition) => ({ level: l, name: ambitionName(l), howToWrite: AMBITION[l].writer });
 
+/** The user's achievements with ids, for linking requirements to evidence while curating. */
+const achievementList = (m: Master) => m.entries.flatMap((e) => e.achievements.map((a) => ({ id: a.id, role: entryLabel(e), text: a.text })));
+
+/** Keep only links to real achievements, keyed the way analyzeRequirements looks them up. */
+function linksFrom(links: { requirement: string; achievementIds: string[] }[], m: Master) {
+  const ids = new Set(m.entries.flatMap((e) => e.achievements.map((a) => a.id)));
+  return Object.fromEntries(links.map((l) => [requirementKey(l.requirement), l.achievementIds.filter((id) => ids.has(id))] as const));
+}
+
+const linkShape = z.array(z.object({ requirement: z.string().describe("The requirement exactly as in mustHave or niceToHave"), achievementIds: z.array(z.string()).describe("Achievements that genuinely show it; empty if none") }));
+
 const wordCount = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
@@ -191,7 +202,7 @@ export function createMcpServer() {
     async ({ application_id }) => {
       const job = await needApp(application_id);
       const m = await getMaster();
-      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
+      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed, job.evidence);
       const cv = job.cvId ? await get("cvs", job.cvId) : null;
       const rating = cv ? rateCv(cv.content, m) : null;
       return json({
@@ -201,7 +212,7 @@ export function createMcpServer() {
         job: job.parsed,
         ...(job.curatedAt
           ? { listing: { curated: job.curatedAt, note: "Already curated: use this description and these requirements; don't curate again unless the user asks.", description: job.description ?? "" } }
-          : { listing: { curated: false, nextStep: `This listing hasn't been curated, so the requirements above are only a rough keyword guess. ${CURATE}`, rawText: job.rawText.slice(0, 15000) } }),
+          : { listing: { curated: false, nextStep: `This listing hasn't been curated, so the requirements above are only a rough keyword guess. ${CURATE}`, rawText: job.rawText.slice(0, 15000), achievements: achievementList(m) } }),
         source: job.url || "pasted description",
         requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
         notClaimed: job.unclaimed,
@@ -446,6 +457,7 @@ export function createMcpServer() {
         nextStep: `Curate it now, before anything else. ${CURATE} The rough keyword guess below is only a starting point.`,
         firstGuess: job.parsed,
         rawText: job.rawText.slice(0, 15000),
+        achievements: achievementList(await getMaster()),
       });
     },
   );
@@ -470,10 +482,12 @@ export function createMcpServer() {
         responsibilities: z.array(z.string()).optional(),
         yearsExperience: z.string().optional().describe("e.g. '5+ years', or empty"),
         education: z.string().optional(),
+        evidence: linkShape.optional().describe("For each requirement, the achievement ids that prove it (judge meaning, not wording)"),
       },
     },
     async (i) => {
       const job = await needApp(i.application_id);
+      const m = await getMaster();
       const t = tracker();
       await t.doc("jobs", job.id);
       job.parsed = {
@@ -492,17 +506,44 @@ export function createMcpServer() {
       const again = Boolean(job.curatedAt);
       job.description = i.description.trim();
       job.curatedAt = new Date().toISOString();
+      if (i.evidence) job.evidence = linksFrom(i.evidence, m);
       await saveJob(job);
       await t.record({ kind: "job", summary: `${again ? "Re-curated" : "Curated"} the listing for ${i.title}`, appId: job.id, details: [{ label: "Listing", after: `${wordCount(job.rawText)} words cut to ${wordCount(job.description)}` }, { label: "Must have", after: i.mustHave.join(", ") }, ...(i.niceToHave?.length ? [{ label: "Nice to have", after: i.niceToHave.join(", ") }] : [])] });
-      const m = await getMaster();
-      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
+      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed, job.evidence);
       return json({
         saved: true,
         listing: "curated (stored; no need to do it again)",
+        ...(i.evidence ? {} : { evidence: "Not linked: requirements only match achievements that use the same words. Link them with link_requirements." }),
         backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
         gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
         weak: reqs.filter((r) => r.state === "weak").map((r) => r.name),
         nextStep: "Ask the user about each gap, one at a time. Add evidence with update_profile, or call mark_not_claimed if they don't have it.",
+        link: appLink(job.id),
+      });
+    },
+  );
+
+  server.registerTool(
+    "link_requirements",
+    {
+      title: "Link requirements to evidence",
+      description:
+        "Set which of the user's achievements prove each requirement of an application, judging meaning rather than wording. Use it after adding new evidence for a gap, or to fix a link. Each requirement you list replaces its earlier links; others are kept.",
+      inputSchema: { application_id: z.string(), links: linkShape },
+    },
+    async ({ application_id, links }) => {
+      const job = await needApp(application_id);
+      const m = await getMaster();
+      const t = tracker();
+      await t.doc("jobs", job.id);
+      job.evidence = { ...(job.evidence ?? {}), ...linksFrom(links, m) };
+      await saveJob(job);
+      const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed, job.evidence);
+      await t.record({ kind: "job", summary: `Linked evidence for ${links.length} requirement${links.length === 1 ? "" : "s"}`, appId: job.id, details: links.map((l) => ({ label: l.requirement, after: `${l.achievementIds.length} achievement${l.achievementIds.length === 1 ? "" : "s"}` })) });
+      return json({
+        saved: true,
+        backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
+        gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
         link: appLink(job.id),
       });
     },

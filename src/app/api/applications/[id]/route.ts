@@ -13,7 +13,7 @@ async function load(id: string) {
   const [m, cv] = await Promise.all([getMaster(), job.cvId ? get("cvs", job.cvId) : null]);
   return {
     job,
-    requirements: analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed),
+    requirements: analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed, job.evidence),
     cv,
     report: cv ? keywordReport(cvPlainText(cv.content), job.parsed) : null,
     rating: cv ? rateCv(cv.content, m) : null,

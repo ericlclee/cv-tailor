@@ -67,7 +67,7 @@ Requires Node 22.5+. Without `DATABASE_URL`, data is stored in a local file, `./
 claude mcp add --transport http cv-tailor http://localhost:3000/mcp
 ```
 
-Locally, no password or token is needed: the MCP endpoint only answers requests addressed to localhost.
+Locally, without the Google settings, there's no sign-in: the web app and the MCP endpoint only answer requests addressed to localhost, and everything belongs to one local user. Add the Google settings to `.env.local` to try accounts locally.
 
 ## Deploy to Vercel
 
@@ -81,61 +81,35 @@ Hosting it means your chat can reach it from anywhere, including claude.ai on th
 
 2. **Import the project in Vercel** (push it to GitHub, then vercel.com › Add New › Project), or run `npx vercel` in this folder.
 
-3. **Set environment variables** in the Vercel project (Settings › Environment Variables), then redeploy:
+3. **Create a Google OAuth client** for sign-in. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials): create a project, set up the OAuth consent screen (External; app name "CV Tailor"), then **Create credentials › OAuth client ID › Web application**, with these **Authorized redirect URIs**:
+   - `https://<your-app>.vercel.app/api/auth/google/callback`
+   - `http://localhost:3000/api/auth/google/callback` (only needed to test Google sign-in locally)
+
+   While the consent screen is in **Testing**, Google only lets its listed test users sign in (Audience › Test users). Add yourself and the people you approve, or click **Publish app** so only CV Tailor's own approval list decides. CV Tailor only asks for name, email and profile picture.
+
+4. **Set environment variables** in the Vercel project (Settings › Environment Variables), then redeploy:
 
    | Variable | Value |
    |---|---|
    | `DATABASE_URL` | the Supabase connection string from step 1 |
-   | `APP_PASSWORD` | the password for the web app |
-   | `MCP_TOKEN` | a long random secret: `openssl rand -hex 24` |
-   | `APP_URL` | optional; defaults to the production address |
-
-   Without `APP_PASSWORD` the deployed app refuses to serve anything; without `MCP_TOKEN` the MCP endpoint refuses every request.
-
-4. **Connect your chat** to `https://<your-app>.vercel.app/mcp`. The app's Activity panel shows these snippets with your address filled in.
-
-   - **Claude Desktop** (token sent as a header):
-
-     ```json
-     {
-       "mcpServers": {
-         "cv-tailor": {
-           "command": "npx",
-           "args": ["-y", "mcp-remote", "https://<your-app>.vercel.app/mcp", "--header", "Authorization:${AUTH_HEADER}"],
-           "env": { "AUTH_HEADER": "Bearer <your MCP_TOKEN>" }
-         }
-       }
-     }
-     ```
-
-   - **Claude Code:** `claude mcp add --transport http cv-tailor https://<your-app>.vercel.app/mcp --header "Authorization: Bearer <your MCP_TOKEN>"`
-   - **claude.ai** (web and mobile): Settings › Connectors › Add custom connector, URL `https://<your-app>.vercel.app/mcp?key=<your MCP_TOKEN>`.
-   - **ChatGPT:** Settings › Connectors (developer mode), same URL.
-
-**Security (single user).** Anyone with the password can use the web app, and anyone with the token can read and change your data through the MCP endpoint. Keep both secret; to revoke access, change them in Vercel and redeploy. Changing the password signs every browser out. The token sits in the connector URL for apps that only accept a URL, so treat that URL like a password.
-
-### Accounts: invite other people
-
-With Google sign-in configured, CV Tailor becomes invite-only and multi-user: everyone signs in with Google, gets their own profile, applications and CVs, and connects their own chat app with their own key. Until it's configured, the app keeps running as a single user (above).
-
-1. **Create a Google OAuth client.** In [Google Cloud Console](https://console.cloud.google.com/apis/credentials): create a project, set up the OAuth consent screen (External; app name "CV Tailor"; add your email as a test user while it's in testing, or publish it), then **Create credentials › OAuth client ID › Web application**. Add these **Authorized redirect URIs**:
-   - `https://<your-app>.vercel.app/api/auth/google/callback`
-   - `http://localhost:3000/api/auth/google/callback` (for local development)
-2. **Set these in Vercel**, then redeploy:
-
-   | Variable | Value |
-   |---|---|
    | `GOOGLE_CLIENT_ID` | from the OAuth client |
    | `GOOGLE_CLIENT_SECRET` | from the OAuth client |
    | `SESSION_SECRET` | a long random secret for signing sign-in cookies: `openssl rand -hex 32` |
-   | `OWNER_EMAIL` | your Google email: you can always sign in, and you manage invites |
+   | `OWNER_EMAIL` | your Google email: you can always sign in, and you approve everyone else |
+   | `MCP_TOKEN` | optional: an extra key for your own chat apps, `openssl rand -hex 24` |
+   | `APP_URL` | optional; defaults to the production address |
 
-   `APP_PASSWORD` is no longer used once these are set. Keep `MCP_TOKEN`: it carries on working as your key, so existing chat connections don't break.
-3. **Sign in** with your Google account. Everything created before accounts were turned on moves to your account.
-4. **Invite people** from **People and invites** (bottom of the sidebar): create a link, optionally locked to one Google email, and send it. Links work once and last 14 days. You can remove people there too, which deletes their data.
-5. **Each person connects their own chat**: Activity › How to connect a chat app › **Make my key**. The key is shown once, already filled into the connector address. Making a new key replaces the old one.
+   Without the Google settings and `SESSION_SECRET`, the deployed app refuses to serve anything.
 
-Each person only ever sees their own data, in the web app and through their key.
+5. **Sign in** with your Google account. Data from an earlier single-user setup moves to your account.
+
+6. **Connect your chat**: Activity › How to connect a chat app › **Make my key**. The key is shown once, already filled into the connector address, with instructions for Claude (web, desktop and mobile), Claude Desktop's config file, Claude Code and ChatGPT. Making a new key replaces the old one. `MCP_TOKEN`, if set, also works as your key.
+
+### Approving other people
+
+Only the owner and the emails you approve can sign in. Open **People** at the bottom of the sidebar, add someone's Google email and send them the app's address; they sign in with Google, get their own empty profile, and connect their own chat with their own key. Each person only ever sees their own data, in the web app and through their key. You can withdraw an approval before it's used, and remove people later, which deletes their data and ends their access at once.
+
+**Security.** Each connection key, and `MCP_TOKEN`, reads and changes its owner's data, and sits in the connector URL for apps that only accept a URL, so treat that URL like a password. Changing `SESSION_SECRET` signs everyone out.
 
 **Running a local model instead** (LM Studio, or Ollama through an MCP-capable client like Open WebUI): point its MCP settings at the same URL. Small models are weaker at multi-step tool use, but the evidence checks still apply.
 
@@ -185,9 +159,9 @@ src/lib/tailor.ts       Turns a CV plan into CV content and checks it against th
 src/lib/requirements.ts Links each job requirement to the achievements that prove it
 src/lib/applications.ts Status, timeline and notes
 src/lib/db.ts           Small JSON document store, scoped per user: Postgres/Supabase (DATABASE_URL) or a local SQLite file
-src/proxy.ts            Sign-in gate: Google accounts, or the single-user APP_PASSWORD
+src/proxy.ts            Sign-in gate: Google accounts (open to this computer only when run locally without them)
 src/lib/session.ts      Who a request belongs to: signed cookies, and the MCP key's user
-src/lib/users.ts        Invite-only sign-in, invites and per-user MCP keys
+src/lib/users.ts        Sign-in by approved email, approvals and per-user MCP keys
 src/lib/google.ts       Google sign-in (OpenID Connect with PKCE)
 src/components/workspace/  Sidebar, documents (profile, match, CV, timeline) and the activity panel
 ```

@@ -163,7 +163,7 @@ export function ActivityPanel({ scope, context, prompts }: { scope: string | nul
 const LOCAL = "http://localhost:3000";
 
 /** The address the app is served from (localhost while server-rendering). */
-function useOrigin() {
+export function useOrigin() {
   return useSyncExternalStore(
     () => () => {},
     () => window.location.origin,
@@ -321,7 +321,7 @@ function KeySetup({ createdAt }: { createdAt: string | null }) {
   );
 }
 
-/** Single-user mode: one shared MCP_TOKEN (or none, locally). */
+/** Local mode: an optional shared MCP_TOKEN. */
 function SharedTokenSetup() {
   const origin = useOrigin();
   const local = isLocal(origin);

@@ -96,7 +96,7 @@ export function Sidebar() {
   );
 }
 
-/** Who's signed in, with Admin (owner) and Sign out. In single-user mode, just the profile name. */
+/** Who's signed in, with People (owner) and Sign out. In local mode, just the profile name. */
 function Account({ path, fallbackName, onSignOut }: { path: string; fallbackName: string; onSignOut: () => void }) {
   const [me, setMe] = useState<Me | null>(null);
   useEffect(() => {
@@ -131,7 +131,7 @@ function Account({ path, fallbackName, onSignOut }: { path: string; fallbackName
       <div className="flex gap-1">
         {me.user?.role === "owner" && (
           <Link href="/admin" aria-current={path === "/admin" ? "page" : undefined} className="flex min-h-9 items-center rounded-lg px-3 text-[13px] font-medium text-muted hover:text-ink">
-            People and invites
+            People
           </Link>
         )}
         {me.canSignOut && (

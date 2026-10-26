@@ -10,7 +10,7 @@ export default async function AdminPage() {
   if (owner) return <AdminPanel />;
   return (
     <DocPanel>
-      <DocBar title="People and invites" />
+      <DocBar title="People" />
       <DocBody>
         <p className="text-muted">{accountsEnabled() ? "Only the owner can manage people and invites." : "Turn on Google sign-in to invite other people. See the README."}</p>
       </DocBody>

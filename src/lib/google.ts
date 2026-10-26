@@ -19,7 +19,6 @@ interface Pending {
   nonce: string;
   verifier: string;
   next: string;
-  invite: string;
 }
 
 const safeNext = (next: string | null) => (next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
@@ -32,7 +31,6 @@ export function startSignIn(req: Request): { location: string; cookie: string } 
     nonce: randomBytes(16).toString("base64url"),
     verifier: randomBytes(32).toString("base64url"),
     next: safeNext(url.searchParams.get("next")),
-    invite: url.searchParams.get("invite") ?? "",
   };
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
@@ -86,5 +84,5 @@ export async function finishSignIn(req: Request, cookieValue: string | undefined
     claims.email_verified === true &&
     typeof claims.email === "string";
   if (!valid) throw new SignInFailed("failed");
-  return { profile: { email: claims.email as string, name: String(claims.name ?? ""), picture: String(claims.picture ?? "") }, next: pending.next, invite: pending.invite };
+  return { profile: { email: claims.email as string, name: String(claims.name ?? ""), picture: String(claims.picture ?? "") }, next: pending.next };
 }

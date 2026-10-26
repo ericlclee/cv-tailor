@@ -1,26 +1,25 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
-import { currentUserId, invites, newId, users } from "./db";
+import { approvals, currentUserId, newId, users } from "./db";
 import { HttpError } from "./http";
 import { accountsEnabled, LOCAL_USER_ID } from "./session";
-import type { Invite, User } from "./types";
+import type { Approval, User } from "./types";
 
-// Accounts: who may sign in, invitations, and each user's MCP key.
+// Accounts: who may sign in, and each user's MCP key.
 //
-// Sign-in is invite only. OWNER_EMAIL's Google account can always sign in and becomes
-// the owner, taking over any data from before accounts were turned on. Everyone else
-// needs an unused invite link from the owner.
+// Sign-in is by approval only. OWNER_EMAIL's Google account can always sign in and
+// becomes the owner, taking over any data from before accounts were turned on. Everyone
+// else needs the owner to approve their email first; they then sign in with Google.
 
 const now = () => new Date().toISOString();
 const ownerEmail = () => (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
-const INVITE_DAYS = 14;
 
-export class NotInvited extends Error {}
+export class NotApproved extends Error {}
 
 const findByEmail = async (email: string) => (await users.list()).find((u) => u.email === email.toLowerCase()) ?? null;
 
-/** Called after Google has confirmed who someone is. Returns their user, creating it if they may join. */
-export async function signIn(profile: { email: string; name: string; picture: string }, inviteCode?: string): Promise<User> {
+/** Called after Google has confirmed who someone is. Returns their user, creating it if they're approved. */
+export async function signIn(profile: { email: string; name: string; picture: string }): Promise<User> {
   const email = profile.email.toLowerCase();
   const existing = await findByEmail(email);
   if (existing) return users.put({ ...existing, name: profile.name || existing.name, picture: profile.picture, lastSignInAt: now() });
@@ -34,14 +33,14 @@ export async function signIn(profile: { email: string; name: string; picture: st
     return owner;
   }
 
-  const invite = inviteCode ? await invites.get(inviteCode) : null;
-  if (!invite || invite.usedBy || invite.expiresAt < at || (invite.email && invite.email !== email)) throw new NotInvited();
+  if (!(await approvals.get(email))) throw new NotApproved();
   const user = await users.put(fresh("member"));
-  await invites.put({ ...invite, usedBy: user.id, usedAt: at });
+  // From now on they sign in as an existing user; removing them from People ends access.
+  await approvals.remove(email);
   return user;
 }
 
-/** The signed-in user (in single-user mode, a stand-in for the one local user). */
+/** The signed-in user (in local mode, a stand-in for the one local user). */
 export async function currentUser(): Promise<User> {
   const id = await currentUserId();
   if (id === LOCAL_USER_ID) return { id, email: "", name: "", picture: "", role: "owner", createdAt: "", lastSignInAt: "" };
@@ -64,7 +63,7 @@ const hashKey = (key: string) => createHash("sha256").update(key).digest("hex");
 /** Make a new key for the current user, replacing any old one. The key is only returned here. */
 export async function createMcpKey(): Promise<string> {
   const user = await currentUser();
-  if (user.id === LOCAL_USER_ID) throw new HttpError(400, "Connection keys are for accounts. In single-user mode, use MCP_TOKEN.");
+  if (user.id === LOCAL_USER_ID) throw new HttpError(400, "Connection keys need Google sign-in. Locally, use MCP_TOKEN.");
   const key = `cvt_${randomBytes(24).toString("base64url")}`;
   await users.put({ ...user, mcpKeyHash: hashKey(key), mcpKeyCreatedAt: now() });
   return key;
@@ -86,20 +85,11 @@ export async function userForMcpKey(key: string): Promise<User | null> {
 }
 
 // ---------------------------------------------------------------------------
-// Invites
+// Approvals
 
-export async function createInvite(email = ""): Promise<Invite> {
-  const at = new Date();
-  return invites.put({
-    id: randomBytes(12).toString("base64url"),
-    email: email.trim().toLowerCase(),
-    createdAt: at.toISOString(),
-    expiresAt: new Date(at.getTime() + INVITE_DAYS * 86400_000).toISOString(),
-  });
-}
-
-/** An invite that can still be used, or null. */
-export async function openInvite(code: string): Promise<Invite | null> {
-  const invite = await invites.get(code);
-  return invite && !invite.usedBy && invite.expiresAt > now() ? invite : null;
+/** Approve an email: that Google account can now sign in. */
+export async function approveEmail(raw: string): Promise<Approval> {
+  const email = raw.trim().toLowerCase();
+  if (email === ownerEmail() || (await findByEmail(email))) throw new HttpError(409, "That email already has an account.");
+  return approvals.put({ id: email, email, approvedAt: now() });
 }

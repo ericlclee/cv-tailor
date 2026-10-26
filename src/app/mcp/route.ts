@@ -9,9 +9,9 @@ import { userForMcpKey } from "@/lib/users";
 // that only take a URL).
 // - With accounts (Google sign-in), every request needs a user's own key, made in the
 //   web app, and runs as that user. MCP_TOKEN still works as the owner's key.
-// - In single-user mode, MCP_TOKEN guards the endpoint. Without it, only requests
-//   addressed to localhost are served, so a tunnel or public address can't reach your
-//   data by accident.
+// - In local mode (no Google settings), MCP_TOKEN guards the endpoint. Without it, only
+//   requests addressed to localhost are served, so a tunnel or public address can't
+//   reach your data by accident. A deployment without accounts serves nothing.
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +37,7 @@ async function handle(req: Request) {
     if (!user) return Response.json({ error: "Missing or unknown key. Create your connection key in CV Tailor (Activity › How to connect a chat app)." }, { status: 401 });
     return runAsUser(user.id, () => serve(req));
   }
+  if (process.env.VERCEL) return Response.json({ error: "Set up Google sign-in for this deployment first (see the README)." }, { status: 503 });
   return denied(req) ?? serve(req);
 }
 

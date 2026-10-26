@@ -4,10 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client/api";
 import { toast, toastError } from "../toast";
 import { Button, Input } from "../ui";
-import { copyText } from "./activity-panel";
+import { copyText, useOrigin } from "./activity-panel";
 import { DocBar, DocBody, DocPanel, SectionLabel } from "./doc";
 
-// The owner's page: invite people and see who has an account.
+// The owner's page: approve people's emails and see who has an account.
 
 interface Person {
   id: string;
@@ -19,38 +19,31 @@ interface Person {
   lastSignInAt: string;
   connected: boolean;
 }
-interface PendingInvite {
-  id: string;
-  email: string;
-  createdAt: string;
-  expiresAt: string;
-}
 interface AdminData {
   me: string;
   users: Person[];
-  invites: PendingInvite[];
+  approved: { email: string; approvedAt: string }[];
 }
 
 const day = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
-const inviteUrl = (id: string) => `${window.location.origin}/invite/${id}`;
 
 export function AdminPanel() {
   const [data, setData] = useState<AdminData | null>(null);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<string | null>(null);
+  const origin = useOrigin();
 
   const load = useCallback(() => {
     api<AdminData>("/api/admin").then(setData).catch(toastError);
   }, []);
   useEffect(load, [load]);
 
-  async function invite(e: React.FormEvent) {
+  async function approve(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
-      const r = await api<{ url: string }>("/api/admin/invites", { body: { email } });
-      setCreated(r.url);
+      await api("/api/admin/approvals", { body: { email } });
+      toast(`${email.trim()} can now sign in`);
       setEmail("");
       load();
     } catch (err) {
@@ -60,10 +53,10 @@ export function AdminPanel() {
     }
   }
 
-  async function withdraw(id: string) {
+  async function withdraw(email: string) {
     try {
-      await api(`/api/admin/invites/${id}`, { method: "DELETE" });
-      toast("Invite withdrawn");
+      await api(`/api/admin/approvals/${encodeURIComponent(email)}`, { method: "DELETE" });
+      toast("Approval withdrawn");
       load();
     } catch (err) {
       toastError(err);
@@ -83,39 +76,35 @@ export function AdminPanel() {
 
   return (
     <DocPanel>
-      <DocBar title="People and invites" />
+      <DocBar title="People" />
       <DocBody>
         <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface px-6 py-5">
-          <h2 className="text-base font-semibold">Invite someone</h2>
-          <p className="text-sm leading-relaxed text-ink-2">They sign in with Google from the link. Add their email to make the link work only for that account. Links last 14 days and work once.</p>
-          <form onSubmit={invite} className="flex flex-wrap gap-2">
-            <Input type="email" placeholder="Their Google email (optional)" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-0 flex-1" aria-label="Their Google email (optional)" />
-            <Button variant="primary" type="submit" loading={busy}>
-              Create invite link
+          <h2 className="text-base font-semibold">Approve someone</h2>
+          <p className="text-sm leading-relaxed text-ink-2">Add the email of their Google account. They can then sign in with Google at this app&apos;s address; nobody else can.</p>
+          <form onSubmit={approve} className="flex flex-wrap gap-2">
+            <Input type="email" required placeholder="name@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-0 flex-1" aria-label="Their Google email" />
+            <Button variant="primary" type="submit" loading={busy} disabled={!email.trim()}>
+              Approve
             </Button>
           </form>
-          {created && (
-            <div className="flex flex-wrap items-center gap-2 rounded-lg bg-paper px-3 py-2.5">
-              <code className="min-w-0 flex-1 text-[13px] break-all">{created}</code>
-              <Button size="sm" onClick={() => copyText(created, "Invite link copied")}>
-                Copy
-              </Button>
-            </div>
-          )}
+          <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
+            <span>Send them the address:</span>
+            <code className="text-[13px]">{origin}</code>
+            <Button size="sm" variant="ghost" onClick={() => copyText(origin, "Address copied")}>
+              Copy
+            </Button>
+          </div>
         </section>
 
-        {data && data.invites.length > 0 && (
+        {data && data.approved.length > 0 && (
           <section className="flex flex-col gap-2 rounded-[14px] border border-line bg-surface px-6 py-5">
-            <SectionLabel>Waiting to be used</SectionLabel>
+            <SectionLabel>Approved, not signed in yet</SectionLabel>
             <ul className="flex flex-col">
-              {data.invites.map((i) => (
-                <li key={i.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-paper py-2.5 first:border-t-0">
-                  <span className="flex-1 text-[15px]">{i.email || "Anyone with the link"}</span>
-                  <span className="text-[13px] text-muted">expires {day(i.expiresAt)}</span>
-                  <Button size="sm" variant="ghost" onClick={() => copyText(inviteUrl(i.id), "Invite link copied")}>
-                    Copy link
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => withdraw(i.id)}>
+              {data.approved.map((a) => (
+                <li key={a.email} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-paper py-2.5 first:border-t-0">
+                  <span className="flex-1 text-[15px]">{a.email}</span>
+                  <span className="text-[13px] text-muted">approved {day(a.approvedAt)}</span>
+                  <Button size="sm" variant="ghost" onClick={() => withdraw(a.email)}>
                     Withdraw
                   </Button>
                 </li>

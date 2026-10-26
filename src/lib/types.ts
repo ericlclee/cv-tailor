@@ -258,13 +258,9 @@ export interface User {
   lastSignInAt: string;
 }
 
-/** An invitation to join. The id is the code in the invite link. */
-export interface Invite {
+/** An email the owner has approved, waiting for its first sign-in. The id is the email. */
+export interface Approval {
   id: string;
-  /** If set, only this Google account can use the invite. */
   email: string;
-  createdAt: string;
-  expiresAt: string;
-  usedBy?: string;
-  usedAt?: string;
+  approvedAt: string;
 }

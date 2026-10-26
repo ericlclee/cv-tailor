@@ -5,12 +5,12 @@ import { attachDatabasePool } from "@vercel/functions";
 import { customAlphabet } from "nanoid";
 import pg from "pg";
 import { LOCAL_USER_ID, sessionUser, SignInRequired } from "./session";
-import type { Activity, CvDraft, Entry, Invite, Job, Profile, Skill, Suggestion, User } from "./types";
+import type { Activity, Approval, CvDraft, Entry, Job, Profile, Skill, Suggestion, User } from "./types";
 
 // A small document store. Each collection is a table of JSON documents, which
 // keeps the schema flexible while the product changes. Every document and setting
 // belongs to one user (user_id); the exported functions only ever see the current
-// user's data (see session.ts). Users and invites are global.
+// user's data (see session.ts). Users and approvals are global.
 //
 // Where the data lives:
 // - DATABASE_URL: a Postgres database, e.g. Supabase. Required on Vercel, whose
@@ -49,7 +49,7 @@ interface Store {
   globalGet(t: Global, id: string): Promise<unknown | null>;
   globalPut(t: Global, id: string, doc: unknown): Promise<void>;
   globalRemove(t: Global, id: string): Promise<void>;
-  /** Give data without an owner (from before accounts, or single-user mode) to a user. */
+  /** Give data without an owner (from before accounts, or local mode) to a user. */
   claimUnowned(u: string): Promise<void>;
   /** Delete everything a user owns. */
   deleteUserData(u: string): Promise<void>;
@@ -123,7 +123,7 @@ async function postgresStore(url: string): Promise<Store> {
     },
     claimUnowned: async (u) => {
       for (const c of COLLECTIONS) await query(`UPDATE cv_tailor.${c} SET user_id = $1 WHERE user_id IS NULL OR user_id = $2`, [u, LOCAL_USER_ID]);
-      // Settings from before accounts have no "<user>:" prefix; single-user ones use "local:".
+      // Settings from before accounts have no "<user>:" prefix; local-mode ones use "local:".
       await query(`UPDATE cv_tailor.kv SET key = $1 || ':' || key, user_id = $1 WHERE user_id IS NULL AND position(':' in key) = 0`, [u]);
       await query(`UPDATE cv_tailor.kv SET key = $1 || substr(key, length($2) + 1), user_id = $1 WHERE user_id = $2 AND NOT EXISTS (SELECT 1 FROM cv_tailor.kv k WHERE k.key = $1 || substr(cv_tailor.kv.key, length($2) + 1))`, [u, LOCAL_USER_ID]);
     },
@@ -153,7 +153,7 @@ async function postgresStore(url: string): Promise<Store> {
         if (!["42P06", "42P07", "23505", "42701"].includes(code ?? "")) throw err;
       }
     }
-    // Data from before users existed belongs to the single user until an owner claims it.
+    // Data from before users existed belongs to the local user until the owner claims it.
     await s.claimUnowned(LOCAL_USER_ID);
     await query("CREATE TABLE IF NOT EXISTS cv_tailor.users (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
   }
@@ -227,7 +227,7 @@ async function sqliteStore(): Promise<Store> {
       db.prepare("DELETE FROM kv WHERE user_id = ?").run(u);
     },
   };
-  // Data from before users existed belongs to the single user until an owner claims it.
+  // Data from before users existed belongs to the local user until the owner claims it.
   if (migrated) await s.claimUnowned(LOCAL_USER_ID);
   return s;
 }
@@ -305,7 +305,7 @@ export async function maxField(c: Collection, field: string): Promise<string> {
   return s.maxField(u, c, field);
 }
 
-// Users and invites (not scoped to the current user). Used by users.ts.
+// Users and approved emails (not scoped to the current user). Used by users.ts.
 
 export const users = {
   list: async () => (await (await store()).globalList("users")) as User[],
@@ -325,14 +325,15 @@ export const users = {
   claimUnowned: async (id: string) => (await store()).claimUnowned(id),
 };
 
-export const invites = {
-  list: async () => (await (await store()).globalList("invites")) as Invite[],
-  get: async (id: string) => (await (await store()).globalGet("invites", id)) as Invite | null,
-  put: async (i: Invite) => {
-    await (await store()).globalPut("invites", i.id, i);
-    return i;
+// Approvals live in the "invites" table, named for the invite links they replaced.
+export const approvals = {
+  list: async () => (await (await store()).globalList("invites")) as Approval[],
+  get: async (email: string) => (await (await store()).globalGet("invites", email)) as Approval | null,
+  put: async (a: Approval) => {
+    await (await store()).globalPut("invites", a.id, a);
+    return a;
   },
-  remove: async (id: string) => (await store()).globalRemove("invites", id),
+  remove: async (email: string) => (await store()).globalRemove("invites", email),
 };
 
 export const EMPTY_PROFILE: Profile = {

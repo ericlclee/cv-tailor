@@ -7,7 +7,7 @@ import { Button, Input } from "../ui";
 import { copyText, useOrigin } from "./activity-panel";
 import { DocBar, DocBody, DocPanel, SectionLabel } from "./doc";
 
-// The owner's page: approve people's emails and see who has an account.
+// The owner's page: approve people's emails, make password links, and see who has an account.
 
 interface Person {
   id: string;
@@ -19,6 +19,12 @@ interface Person {
   lastSignInAt: string;
   connected: boolean;
   password: boolean;
+}
+interface PasswordLink {
+  email: string;
+  url: string;
+  reset: boolean;
+  expiresAt: string;
 }
 interface AdminData {
   me: string;
@@ -32,12 +38,25 @@ export function AdminPanel() {
   const [data, setData] = useState<AdminData | null>(null);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState<PasswordLink | null>(null);
   const origin = useOrigin();
 
   const load = useCallback(() => {
     api<AdminData>("/api/admin").then(setData).catch(toastError);
   }, []);
   useEffect(load, [load]);
+  // The link shows at the top; bring it into view when made from further down.
+  useEffect(() => {
+    if (link) document.getElementById("password-link")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [link]);
+
+  async function makeLink(forEmail: string) {
+    try {
+      setLink(await api<PasswordLink>("/api/admin/password-links", { body: { email: forEmail } }));
+    } catch (err) {
+      toastError(err);
+    }
+  }
 
   async function approve(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +64,8 @@ export function AdminPanel() {
     try {
       await api("/api/admin/approvals", { body: { email } });
       toast(`${email.trim()} can now sign in`);
+      // Ready to send, for people who'd rather use a password than Google.
+      await makeLink(email);
       setEmail("");
       load();
     } catch (err) {
@@ -81,9 +102,9 @@ export function AdminPanel() {
       <DocBody>
         <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface px-6 py-5">
           <h2 className="text-base font-semibold">Approve someone</h2>
-          <p className="text-sm leading-relaxed text-ink-2">Add the email of their Google account. They can then sign in at this app&apos;s address, with Google or with a password they set by email; nobody else can.</p>
+          <p className="text-sm leading-relaxed text-ink-2">Add their email. They can then sign in at this app&apos;s address with Google, or with a password they choose through a link you send them. Nobody else can sign in.</p>
           <form onSubmit={approve} className="flex flex-wrap gap-2">
-            <Input type="email" required placeholder="name@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-0 flex-1" aria-label="Their Google email" />
+            <Input type="email" required placeholder="name@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-0 flex-1" aria-label="Their email" />
             <Button variant="primary" type="submit" loading={busy} disabled={!email.trim()}>
               Approve
             </Button>
@@ -95,6 +116,27 @@ export function AdminPanel() {
               Copy
             </Button>
           </div>
+          {link && (
+            <div id="password-link" className="flex flex-col gap-2 rounded-lg bg-paper px-3 py-3">
+              <p className="text-sm font-medium">
+                Password link for {link.email}
+                {link.reset ? " (replaces their current password)" : ""}
+              </p>
+              <code className="text-[13px] break-all">{link.url}</code>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button size="sm" onClick={() => copyText(link.url, "Password link copied")}>
+                  Copy link
+                </Button>
+                <span className="text-[13px] text-muted">
+                  Send it to them yourself. It works once, until {day(link.expiresAt)}. Anyone with it can set the password, so send it only to them.
+                </span>
+                <span className="flex-1" />
+                <Button size="sm" variant="ghost" onClick={() => setLink(null)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
         </section>
 
         {data && data.approved.length > 0 && (
@@ -105,6 +147,9 @@ export function AdminPanel() {
                 <li key={a.email} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-paper py-2.5 first:border-t-0">
                   <span className="flex-1 text-[15px]">{a.email}</span>
                   <span className="text-[13px] text-muted">approved {day(a.approvedAt)}</span>
+                  <Button size="sm" variant="ghost" onClick={() => makeLink(a.email)}>
+                    Password link
+                  </Button>
                   <Button size="sm" variant="ghost" onClick={() => withdraw(a.email)}>
                     Withdraw
                   </Button>
@@ -137,6 +182,9 @@ export function AdminPanel() {
                     {p.connected ? " · chat connected" : ""}
                   </span>
                 </span>
+                <Button size="sm" variant="ghost" onClick={() => makeLink(p.email)}>
+                  {p.password ? "Reset password" : "Password link"}
+                </Button>
                 {p.id !== data.me && (
                   <Button size="sm" variant="danger" onClick={() => removePerson(p)}>
                     Remove

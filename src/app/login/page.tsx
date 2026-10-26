@@ -1,8 +1,7 @@
 import { redirect } from "next/navigation";
 import { PasswordSignIn } from "@/components/password-sign-in";
 import { SignInCard } from "@/components/sign-in";
-import { MIN_PASSWORD } from "@/lib/passwords";
-import { accountsEnabled, googleEnabled, passwordsEnabled } from "@/lib/session";
+import { accountsEnabled } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +20,8 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   const to = typeof next === "string" && next.startsWith("/") && !next.startsWith("//") ? next : "/";
   const message = typeof error === "string" ? (ERRORS[error] ?? ERRORS.failed) : "";
   return (
-    <SignInCard googleHref={googleEnabled() ? `/api/auth/google?next=${encodeURIComponent(to)}` : undefined} message={message}>
-      {passwordsEnabled() && <PasswordSignIn next={to} minLength={MIN_PASSWORD} />}
+    <SignInCard googleHref={`/api/auth/google?next=${encodeURIComponent(to)}`} message={message}>
+      <PasswordSignIn next={to} />
     </SignInCard>
   );
 }

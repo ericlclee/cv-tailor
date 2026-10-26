@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { approvals, currentUserId, newId, users } from "./db";
 import { HttpError } from "./http";
-import { hashPassword, linkStillUnused, MIN_PASSWORD, readSetPasswordToken, sendEmail, setPasswordToken, verifyPassword } from "./passwords";
+import { hashPassword, LINK_DAYS, linkStillUnused, MIN_PASSWORD, readSetPasswordToken, setPasswordToken, verifyPassword } from "./passwords";
 import { accountsEnabled, LOCAL_USER_ID } from "./session";
 import type { Approval, User } from "./types";
 
@@ -11,7 +11,7 @@ import type { Approval, User } from "./types";
 // Sign-in is by approval only. OWNER_EMAIL can always sign in and becomes the owner,
 // taking over any data from before accounts were turned on. Everyone else needs the
 // owner to approve their email first. People sign in with Google, or with email and a
-// password they set through a link emailed to them.
+// password they set through a one-time link the owner makes and sends them.
 
 const now = () => new Date().toISOString();
 const ownerEmail = () => (process.env.OWNER_EMAIL ?? "").trim().toLowerCase();
@@ -102,26 +102,17 @@ const mayJoin = async (email: string) => email === ownerEmail() || Boolean(await
 export async function passwordSignIn(rawEmail: string, password: string): Promise<User> {
   const user = await findByEmail(rawEmail.trim());
   const ok = await verifyPassword(password, user?.passwordHash);
-  if (!user || !ok) throw new HttpError(401, "That email and password don't match. If you haven't set a password yet, use \"Set or reset your password\".");
+  if (!user || !ok) throw new HttpError(401, "That email and password don't match. No password yet, or forgotten it? Ask the owner for a password link.");
   return users.put({ ...user, lastSignInAt: now() });
 }
 
-/**
- * Email a link for setting (or resetting) a password, if this email may sign in.
- * Says nothing either way, so the form can't be used to find out who's approved.
- */
-export async function requestPasswordLink(rawEmail: string, appUrl: string) {
+/** Make a one-time link for setting (or resetting) someone's password. The owner sends it to them. */
+export async function createPasswordLink(rawEmail: string, appUrl: string) {
   const email = rawEmail.trim().toLowerCase();
-  if (!(await mayJoin(email))) return;
+  if (!(await mayJoin(email))) throw new HttpError(404, "Approve that email first.");
   const user = await findByEmail(email);
-  const link = `${appUrl}/set-password?token=${encodeURIComponent(setPasswordToken(email, user?.passwordHash))}`;
-  const verb = user?.passwordHash ? "reset" : "set";
-  await sendEmail(
-    email,
-    `${verb === "reset" ? "Reset" : "Set"} your CV Tailor password`,
-    `Use this link to ${verb} your CV Tailor password. It works once and expires in an hour:\n\n${link}\n\nIf you didn't ask for this, ignore this email.`,
-    `<p>Use this link to ${verb} your CV Tailor password. It works once and expires in an hour.</p><p><a href="${link}">${verb === "reset" ? "Reset" : "Set"} my password</a></p><p>If you didn't ask for this, ignore this email.</p>`,
-  );
+  const url = `${appUrl}/set-password?token=${encodeURIComponent(setPasswordToken(email, user?.passwordHash))}`;
+  return { email, url, reset: Boolean(user?.passwordHash), expiresAt: new Date(Date.now() + LINK_DAYS * 86400_000).toISOString() };
 }
 
 /** Who a set-password link is for, if it can still be used. */
@@ -134,7 +125,7 @@ export async function checkPasswordLink(token: string): Promise<string | null> {
 /** Set the password from an emailed link, creating the account if this is their first sign-in. */
 export async function setPasswordFromLink(token: string, password: string): Promise<User> {
   const email = await checkPasswordLink(token);
-  if (!email) throw new HttpError(400, "This link has expired or has already been used. Ask for a new one.");
+  if (!email) throw new HttpError(400, "This link has expired or has already been used. Ask the owner for a new one.");
   if (password.length < MIN_PASSWORD) throw new HttpError(400, `Use at least ${MIN_PASSWORD} characters.`);
   if (password.length > 200) throw new HttpError(400, "That password is too long.");
   return signIn({ email, name: "", passwordHash: await hashPassword(password) });

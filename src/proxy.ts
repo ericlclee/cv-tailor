@@ -7,10 +7,10 @@ import { accountsEnabled, readSession, USER_COOKIE } from "@/lib/session";
 // open to this computer; a Vercel deployment without it is refused. /mcp is left
 // alone: it checks its own keys.
 
-const OPEN = ["/login", "/set-password", "/api/auth/google", "/api/auth/google/callback", "/api/auth/password/login", "/api/auth/password/request", "/api/auth/password/set"];
+const OPEN = ["/login", "/set-password", "/api/auth/google", "/api/auth/google/callback", "/api/auth/password/login", "/api/auth/password/set"];
 
 const SETUP_NEEDED =
-  "CV Tailor is locked: set up sign-in (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and/or RESEND_API_KEY for email and password) plus SESSION_SECRET and OWNER_EMAIL in your Vercel project settings, then redeploy. See the README.";
+  "CV Tailor is locked: set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SESSION_SECRET and OWNER_EMAIL in your Vercel project settings, then redeploy. See the README.";
 
 export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;

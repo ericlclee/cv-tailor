@@ -5,11 +5,10 @@ import { useState } from "react";
 import { api } from "@/lib/client/api";
 import { Button, Input } from "./ui";
 
-// Email and password sign-in, and asking for a set-password link by email.
+// Email and password sign-in, and setting a password from a link the owner made.
 
-export function PasswordSignIn({ next, minLength }: { next: string; minLength: number }) {
+export function PasswordSignIn({ next }: { next: string }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"sign-in" | "link" | "sent">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,56 +19,33 @@ export function PasswordSignIn({ next, minLength }: { next: string; minLength: n
     setBusy(true);
     setError("");
     try {
-      if (mode === "sign-in") {
-        await api("/api/auth/password/login", { body: { email, password } });
-        router.replace(next);
-        return;
-      }
-      await api("/api/auth/password/request", { body: { email } });
-      setMode("sent");
+      await api("/api/auth/password/login", { body: { email, password } });
+      router.replace(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "That didn't work. Try again.");
+      setBusy(false);
     }
-    setBusy(false);
-  }
-
-  if (mode === "sent") {
-    return (
-      <div className="flex flex-col gap-3">
-        <p className="rounded-lg bg-paper px-3 py-2.5 text-sm leading-relaxed text-ink-2">
-          If <strong>{email}</strong> can sign in to CV Tailor, a link to set your password is on its way. It works once and expires in an hour. Check your spam folder if it doesn&apos;t arrive.
-        </p>
-        <button type="button" onClick={() => setMode("sign-in")} className="self-start text-sm font-medium text-accent">
-          Back to sign in
-        </button>
-      </div>
-    );
   }
 
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
-      {mode === "link" && <p className="text-sm leading-relaxed text-ink-2">Enter your email and we&apos;ll send you a link to set a new password (at least {minLength} characters).</p>}
       <label className="flex flex-col gap-1.5 text-sm font-medium">
         Email
         <Input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
       </label>
-      {mode === "sign-in" && (
-        <label className="flex flex-col gap-1.5 text-sm font-medium">
-          Password
-          <Input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
-        </label>
-      )}
+      <label className="flex flex-col gap-1.5 text-sm font-medium">
+        Password
+        <Input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} />
+      </label>
       {error && (
         <p role="alert" className="text-sm text-danger">
           {error}
         </p>
       )}
       <Button variant="primary" type="submit" loading={busy}>
-        {mode === "sign-in" ? "Sign in" : "Email me a link"}
+        Sign in
       </Button>
-      <button type="button" onClick={() => (setMode(mode === "sign-in" ? "link" : "sign-in"), setError(""))} className="self-start text-sm font-medium text-accent">
-        {mode === "sign-in" ? "Set or reset your password" : "Back to sign in"}
-      </button>
+      <p className="text-[13px] leading-relaxed text-muted">No password yet, or forgotten it? Ask the owner for a password link.</p>
     </form>
   );
 }

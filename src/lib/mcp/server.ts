@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { tracker } from "../activity";
 import { AMBITION, ambitionName, toAmbition, type Ambition, type CvRating } from "../ambition";
-import { addEvent, changeStatus, createApplication, getApplication, listApplications, saveJob, STATUS_LABEL } from "../applications";
+import { addEvent, changeStatus, createApplication, findApplicationByUrl, getApplication, listApplications, saveJob, STATUS_LABEL } from "../applications";
 import { masterForPrompt, refreshSuggestions } from "../coach";
 import { applyEdits, prepareEdits } from "../cv-edits";
 import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills, type Master } from "../db";
@@ -25,12 +25,15 @@ export const appUrl = () => {
   return (process.env.APP_URL || (vercel ? `https://${vercel}` : "http://localhost:3000")).replace(/\/$/, "");
 };
 
+// How the chat curates a listing: once per application, stored, then reused.
+const CURATE = `Curate the listing once: rewrite it as a clean job description in its own words, lightly tidied into short paragraphs and bullet lists. Keep the role title, company and team context, location and working pattern, salary if given, what the role does, responsibilities, requirements and nice-to-haves. Cut everything else: site navigation, cookie and privacy notices, apply and share links, other jobs, generic company boilerplate, benefits lists, and equal-opportunity or legal text. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Save it all with set_job_details.`;
+
 const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
 
 Workflow:
 1. Start with get_overview. If the profile is empty, ask the user for their CV (they can attach it to the chat) and record it with update_profile.
 2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
-3. When the user shares a job (link or text), call create_application, then read the description and call set_job_details with the real requirements.
+3. When the user shares a job (link or text), call create_application. If it says the listing needs curating, do it straight away: ${CURATE} Curation is stored with the application and marked done, so never repeat it for an application that's already curated (get_application says so) unless the user asks you to, or the listing has changed.
 4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile. If not, call mark_not_claimed.
 5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Elevated unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
 6. Keep the application current with update_application (applied, interview dates, outcome, notes).
@@ -126,6 +129,8 @@ function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition, 
 
 const ambitionSetting = (l: Ambition) => ({ level: l, name: ambitionName(l), howToWrite: AMBITION[l].writer });
 
+const wordCount = (t: string) => t.split(/\s+/).filter(Boolean).length;
+
 const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
 
 export function createMcpServer() {
@@ -154,7 +159,7 @@ export function createMcpServer() {
           skills: m.skills.length,
         },
         questionsToStrengthenProfile: m.entries.length ? (await refreshSuggestions()).slice(0, 8).map((s) => ({ question: s.question, why: s.reason })) : ["The profile is empty. Ask the user for their CV or their most recent role."],
-        applications: (await listApplications()).map((a) => ({ id: a.id, role: a.title, company: a.company, status: STATUS_LABEL[a.status], link: appLink(a.id) })),
+        applications: (await listApplications()).map((a) => ({ id: a.id, role: a.title, company: a.company, status: STATUS_LABEL[a.status], listing: a.curated ? "curated" : "needs curating (see get_application)", link: appLink(a.id) })),
       });
     },
   );
@@ -179,7 +184,7 @@ export function createMcpServer() {
     {
       title: "Get application",
       description:
-        "One application: the job's details, each requirement with the achievements that prove it (proven, weak, gap, or not claimed), the current CV with bullet and item ids, the timeline, notes, and links to view and download.",
+        "One application: the job's details and curated listing, each requirement with the achievements that prove it (proven, weak, gap, or not claimed), the current CV with bullet and item ids, the timeline, notes, and links to view and download. If the listing hasn't been curated yet, it includes the raw text to curate.",
       inputSchema: { application_id: z.string() },
       annotations: { readOnlyHint: true },
     },
@@ -194,6 +199,9 @@ export function createMcpServer() {
         status: STATUS_LABEL[job.status],
         ambition: ambitionSetting(job.ambition),
         job: job.parsed,
+        ...(job.curatedAt
+          ? { listing: { curated: job.curatedAt, note: "Already curated: use this description and these requirements; don't curate again unless the user asks.", description: job.description ?? "" } }
+          : { listing: { curated: false, nextStep: `This listing hasn't been curated, so the requirements above are only a rough keyword guess. ${CURATE}`, rawText: job.rawText.slice(0, 15000) } }),
         source: job.url || "pasted description",
         requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
         notClaimed: job.unclaimed,
@@ -396,7 +404,7 @@ export function createMcpServer() {
     {
       title: "Create application",
       description:
-        "Start tracking a job. Give a link (Greenhouse, Lever, Ashby, Workday and most career pages are read automatically; LinkedIn and Indeed usually block it) or paste the full description. Returns the job text so you can extract the real requirements and call set_job_details.",
+        "Start tracking a job. Give a link (Greenhouse, Lever, Ashby, Workday and most career pages are read automatically; LinkedIn and Indeed usually block it) or paste the full description. Returns the raw listing for you to curate once with set_job_details. If the link is already tracked, returns that application instead.",
       inputSchema: {
         url: z.string().optional().describe("Link to the job listing"),
         description: z.string().optional().describe("The full job description, if there's no link or the link can't be read"),
@@ -404,6 +412,17 @@ export function createMcpServer() {
     },
     async ({ url, description }) => {
       if (!url && !description?.trim()) return fail("Give a link or the job description.");
+      const existing = url ? await findApplicationByUrl(url) : null;
+      if (existing) {
+        return json({
+          applicationId: existing.id,
+          alreadyTracked: true,
+          role: [existing.parsed.title, existing.parsed.company].filter(Boolean).join(" at "),
+          listing: existing.curatedAt ? "curated" : "needs curating",
+          nextStep: existing.curatedAt ? "This job is already tracked and its listing curated. Carry on with get_application; don't curate it again." : "This job is already tracked but its listing hasn't been curated. Call get_application for the raw text and curate it.",
+          link: appLink(existing.id),
+        });
+      }
       let input: Parameters<typeof createApplication>[0];
       if (description?.trim()) {
         input = { text: description, url: url ?? "", source: url ? "Pasted" : "Pasted" };
@@ -423,9 +442,10 @@ export function createMcpServer() {
       return json({
         applicationId: job.id,
         link: appLink(job.id),
+        listing: "needs curating",
+        nextStep: `Curate it now, before anything else. ${CURATE} The rough keyword guess below is only a starting point.`,
         firstGuess: job.parsed,
-        nextStep: "Read the description below and call set_job_details with the actual title, company and requirements (short ATS terms, using the job's exact spelling). The first guess above is a rough keyword match.",
-        description: job.rawText.slice(0, 15000),
+        rawText: job.rawText.slice(0, 15000),
       });
     },
   );
@@ -433,11 +453,12 @@ export function createMcpServer() {
   server.registerTool(
     "set_job_details",
     {
-      title: "Set job details",
+      title: "Curate job listing",
       description:
-        "Record what the job asks for, as you read it from the description. mustHave and niceToHave are short ATS terms (1–4 words, the job's exact spelling, e.g. 'Python', 'stakeholder management'). These drive the requirement-to-evidence match.",
+        "Save the curated listing for an application: the cleaned-up job description and what the job asks for. Do this once per application (the server marks it done); call it again only if the user asks or the listing changed. mustHave and niceToHave are short ATS terms (1–4 words, the job's exact spelling, e.g. 'Python', 'stakeholder management'). These drive the requirement-to-evidence match.",
       inputSchema: {
         application_id: z.string(),
+        description: z.string().describe("The listing slimmed down to the job description itself: role, team and company context, location, salary, responsibilities, requirements. No navigation, cookie notices, benefits lists, other jobs or legal boilerplate."),
         title: z.string(),
         company: z.string(),
         location: z.string().optional(),
@@ -468,12 +489,16 @@ export function createMcpServer() {
         yearsExperience: i.yearsExperience ?? "",
         education: i.education ?? "",
       };
+      const again = Boolean(job.curatedAt);
+      job.description = i.description.trim();
+      job.curatedAt = new Date().toISOString();
       await saveJob(job);
-      await t.record({ kind: "job", summary: `Read the requirements for ${i.title}`, appId: job.id, details: [{ label: "Must have", after: i.mustHave.join(", ") }, ...(i.niceToHave?.length ? [{ label: "Nice to have", after: i.niceToHave.join(", ") }] : [])] });
+      await t.record({ kind: "job", summary: `${again ? "Re-curated" : "Curated"} the listing for ${i.title}`, appId: job.id, details: [{ label: "Listing", after: `${wordCount(job.rawText)} words cut to ${wordCount(job.description)}` }, { label: "Must have", after: i.mustHave.join(", ") }, ...(i.niceToHave?.length ? [{ label: "Nice to have", after: i.niceToHave.join(", ") }] : [])] });
       const m = await getMaster();
       const reqs = analyzeRequirements(job.parsed, m.entries, m.skills, job.unclaimed);
       return json({
         saved: true,
+        listing: "curated (stored; no need to do it again)",
         backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
         gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
         weak: reqs.filter((r) => r.state === "weak").map((r) => r.name),

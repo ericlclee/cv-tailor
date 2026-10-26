@@ -105,7 +105,12 @@ export interface Job {
   id: string;
   url: string;
   source: string;
+  /** The listing as fetched or pasted, page furniture and all. */
   rawText: string;
+  /** The listing slimmed down by the chat to what matters (set when curated). */
+  description?: string;
+  /** When the chat curated the listing; until then `parsed` is only a rough keyword guess. */
+  curatedAt?: string;
   parsed: ParsedJob | null;
   createdAt: string;
   status?: AppStatus;

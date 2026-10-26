@@ -86,11 +86,32 @@ export async function listApplications() {
         statusLabel: STATUS_LABEL[status],
         dateLabelAt: upcoming?.at ?? events.at(-1)?.at ?? j.createdAt,
         updatedAt: j.updatedAt ?? j.createdAt,
+        curated: Boolean(j.curatedAt),
       };
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 export type AppSummary = Awaited<ReturnType<typeof listApplications>>[number];
+
+/** A listing link without tracking parameters, fragments or a trailing slash, for spotting the same job twice. */
+function sameListing(url: string) {
+  try {
+    const u = new URL(url.trim());
+    for (const k of [...u.searchParams.keys()]) if (/^(utm_|ref$|source$|src$|trk|gh_src$|lever-source)/i.test(k)) u.searchParams.delete(k);
+    u.hash = "";
+    return `${u.host.toLowerCase().replace(/^www\./, "")}${u.pathname.replace(/\/+$/, "")}${u.search}`;
+  } catch {
+    return url.trim();
+  }
+}
+
+/** The application already tracking this listing link, if any. */
+export async function findApplicationByUrl(url: string) {
+  if (!url.trim()) return null;
+  const key = sameListing(url);
+  const job = (await list("jobs")).find((j) => j.parsed && j.url && sameListing(j.url) === key);
+  return job ? getApplication(job.id) : null;
+}
 
 export async function getApplication(id: string) {
   const job = await get("jobs", id);

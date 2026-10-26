@@ -132,8 +132,8 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 | `get_overview` | Profile strength, questions that would strengthen it, applications and their ids |
 | `get_profile` | Full profile with entry and achievement ids |
 | `update_profile` | Add, change or remove contact details, entries, achievements and skills |
-| `create_application` | Start an application from a link (Greenhouse, Lever, Ashby, Workday, most career pages) or pasted text |
-| `set_job_details` | Record the job's requirements as read by your chat |
+| `create_application` | Start an application from a link (Greenhouse, Lever, Ashby, Workday, most career pages) or pasted text; the same link isn't tracked twice |
+| `set_job_details` | Curate a listing once: save the job description cut down to what matters, and its requirements. Stored and marked done, so it isn't redone |
 | `get_application` | Requirements with the evidence behind each, the CV with ids, timeline, notes, download links |
 | `mark_not_claimed` | Requirements you don't have; the CV never claims them |
 | `save_cv` | Save a CV your chat wrote. Every bullet cites achievement ids and carries an ambition rating |

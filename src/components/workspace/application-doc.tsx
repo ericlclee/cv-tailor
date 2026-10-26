@@ -108,14 +108,27 @@ const PILL: Record<Requirement["state"], string> = {
 function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; role: string }) {
   const { job, requirements: reqs } = data;
   const [open, setOpen] = useState<string | null>(null);
-  const [showText, setShowText] = useState(false);
+  const [showText, setShowText] = useState<"listing" | "original" | null>(null);
   const backed = reqs.filter((r) => r.state === "proven" || r.state === "weak").length;
   const p = job.parsed;
+  const curated = Boolean(job.curatedAt);
+  const shown = showText === "listing" && curated ? job.description : showText ? job.rawText : null;
 
   return (
     <DocBody>
+      {!curated && (
+        <section className="flex flex-col items-start gap-2.5 rounded-[14px] border border-warn bg-warn-soft px-6 py-5">
+          <p className="text-[15px] font-semibold text-warn-ink">Your chat hasn&apos;t read this listing yet</p>
+          <p className="text-sm leading-relaxed text-ink-2">
+            The requirements below are a rough keyword guess from the page text. Ask your chat to read the listing: it cuts it down to the job description and picks out what the job asks for, once.
+          </p>
+          <Button size="sm" onClick={() => copyText(`Read the job listing for ${role} in CV Tailor and pick out what it asks for.`, "Prompt copied")}>
+            Copy prompt for your chat
+          </Button>
+        </section>
+      )}
       <section className="flex flex-col gap-2.5 rounded-[14px] border border-line bg-surface px-6 py-5">
-        <SectionLabel>The job · {job.url ? `read from ${job.source}` : "pasted description"}</SectionLabel>
+        <SectionLabel>The job · {job.url && job.source !== "Pasted" ? `read from ${job.source}` : "pasted description"}</SectionLabel>
         <p className="text-[22px] font-semibold tracking-tight">{p.title || "Untitled role"}</p>
         <p className="text-[15px] text-ink-2">{[p.company, p.location, p.seniority, p.yearsExperience].filter(Boolean).join(" · ")}</p>
         {p.summary && <p className="text-[15px] leading-relaxed text-ink-2">{p.summary}</p>}
@@ -125,11 +138,17 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
               Open the listing
             </a>
           )}
-          <button type="button" className="text-accent hover:underline" onClick={() => setShowText(!showText)}>
-            {showText ? "Hide" : "Show"} the full description
+          {curated && (
+            <button type="button" className="text-accent hover:underline" onClick={() => setShowText(showText === "listing" ? null : "listing")}>
+              {showText === "listing" ? "Hide" : "Show"} the job description
+            </button>
+          )}
+          <button type="button" className="text-accent hover:underline" onClick={() => setShowText(showText === "original" || (!curated && showText) ? null : "original")}>
+            {showText === "original" || (!curated && showText) ? "Hide" : "Show"} the {curated ? "original page text" : "full text"}
           </button>
+          {curated && <span className="text-muted">Curated by your chat {new Date(job.curatedAt!).toLocaleDateString("en-GB", { day: "numeric", month: "short" })}</span>}
         </div>
-        {showText && <pre className="mt-1 max-h-96 overflow-auto rounded-lg bg-paper p-4 font-sans text-sm leading-relaxed whitespace-pre-wrap text-ink-2">{job.rawText}</pre>}
+        {shown && <pre className="mt-1 max-h-96 overflow-auto rounded-lg bg-paper p-4 font-sans text-sm leading-relaxed whitespace-pre-wrap text-ink-2">{shown}</pre>}
       </section>
 
       <section className="overflow-hidden rounded-[14px] border border-line bg-surface">

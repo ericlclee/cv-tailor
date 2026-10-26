@@ -251,6 +251,8 @@ export interface User {
   name: string;
   picture: string;
   role: "owner" | "member";
+  /** scrypt hash for email and password sign-in, if they've set one. */
+  passwordHash?: string;
   /** sha256 of the user's MCP key; the key itself is shown once, when created. */
   mcpKeyHash?: string;
   mcpKeyCreatedAt?: string;

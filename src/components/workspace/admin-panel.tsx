@@ -18,6 +18,7 @@ interface Person {
   createdAt: string;
   lastSignInAt: string;
   connected: boolean;
+  password: boolean;
 }
 interface AdminData {
   me: string;
@@ -80,7 +81,7 @@ export function AdminPanel() {
       <DocBody>
         <section className="flex flex-col gap-3 rounded-[14px] border border-line bg-surface px-6 py-5">
           <h2 className="text-base font-semibold">Approve someone</h2>
-          <p className="text-sm leading-relaxed text-ink-2">Add the email of their Google account. They can then sign in with Google at this app&apos;s address; nobody else can.</p>
+          <p className="text-sm leading-relaxed text-ink-2">Add the email of their Google account. They can then sign in at this app&apos;s address, with Google or with a password they set by email; nobody else can.</p>
           <form onSubmit={approve} className="flex flex-wrap gap-2">
             <Input type="email" required placeholder="name@gmail.com" value={email} onChange={(e) => setEmail(e.target.value)} className="min-w-0 flex-1" aria-label="Their Google email" />
             <Button variant="primary" type="submit" loading={busy} disabled={!email.trim()}>
@@ -132,6 +133,7 @@ export function AdminPanel() {
                   </span>
                   <span className="truncate text-[13px] text-muted">
                     {p.email} · joined {day(p.createdAt)} · last signed in {day(p.lastSignInAt)}
+                    {p.password ? " · password set" : ""}
                     {p.connected ? " · chat connected" : ""}
                   </span>
                 </span>

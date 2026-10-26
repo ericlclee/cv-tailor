@@ -1,6 +1,8 @@
-import { GoogleSignIn } from "@/components/google-sign-in";
-import { accountsEnabled } from "@/lib/session";
 import { redirect } from "next/navigation";
+import { PasswordSignIn } from "@/components/password-sign-in";
+import { SignInCard } from "@/components/sign-in";
+import { MIN_PASSWORD } from "@/lib/passwords";
+import { accountsEnabled, googleEnabled, passwordsEnabled } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +15,14 @@ const ERRORS: Record<string, string> = {
 };
 
 export default async function LoginPage({ searchParams }: PageProps<"/login">) {
-  // Without Google sign-in the app only runs locally, with nobody to sign in.
+  // Without sign-in configured the app only runs locally, with nobody to sign in.
   if (!accountsEnabled()) redirect("/");
   const { next, error } = await searchParams;
   const to = typeof next === "string" && next.startsWith("/") && !next.startsWith("//") ? next : "/";
   const message = typeof error === "string" ? (ERRORS[error] ?? ERRORS.failed) : "";
-  return <GoogleSignIn href={`/api/auth/google?next=${encodeURIComponent(to)}`} message={message} />;
+  return (
+    <SignInCard googleHref={googleEnabled() ? `/api/auth/google?next=${encodeURIComponent(to)}` : undefined} message={message}>
+      {passwordsEnabled() && <PasswordSignIn next={to} minLength={MIN_PASSWORD} />}
+    </SignInCard>
+  );
 }

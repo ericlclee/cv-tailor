@@ -4,11 +4,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // Who a request belongs to.
 //
 // Two modes:
-// - Accounts (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET set): people sign in with
-//   Google, once the owner has approved their email. The browser holds a signed cookie
-//   with the user's id; chat apps send their own MCP key, and the MCP route runs the
-//   request as that user. Deployments must run this way.
-// - Local (no Google settings, not on Vercel): everything belongs to one built-in user
+// - Accounts (Google sign-in and/or email and password configured): people sign in once
+//   the owner has approved their email. The browser holds a signed cookie with the
+//   user's id; chat apps send their own MCP key, and the MCP route runs the request as
+//   that user. Deployments must run this way.
+// - Local (neither configured, not on Vercel): everything belongs to one built-in user
 //   and only this computer can reach it. Handy for development.
 
 export const USER_COOKIE = "cvt_user";
@@ -16,7 +16,10 @@ export const SESSION_DAYS = 30;
 /** The one user in local mode (and before accounts existed). Their data moves to the owner at the owner's first sign-in. */
 export const LOCAL_USER_ID = "local";
 
-export const accountsEnabled = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+export const googleEnabled = () => Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+/** Email and password sign-in needs an email service to verify addresses (Resend). */
+export const passwordsEnabled = () => Boolean(process.env.RESEND_API_KEY);
+export const accountsEnabled = () => googleEnabled() || passwordsEnabled();
 
 function sign(value: string) {
   const secret = process.env.SESSION_SECRET;

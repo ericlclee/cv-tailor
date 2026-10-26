@@ -12,7 +12,7 @@ export default async function AdminPage() {
     <DocPanel>
       <DocBar title="People" />
       <DocBody>
-        <p className="text-muted">{accountsEnabled() ? "Only the owner can manage people and invites." : "Turn on Google sign-in to invite other people. See the README."}</p>
+        <p className="text-muted">{accountsEnabled() ? "Only the owner can manage people." : "Set up sign-in to let other people in. See the README."}</p>
       </DocBody>
     </DocPanel>
   );

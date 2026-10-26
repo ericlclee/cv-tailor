@@ -87,6 +87,8 @@ Hosting it means your chat can reach it from anywhere, including claude.ai on th
 
    While the consent screen is in **Testing**, Google only lets its listed test users sign in (Audience › Test users). Add yourself and the people you approve, or click **Publish app** so only CV Tailor's own approval list decides. CV Tailor only asks for name, email and profile picture.
 
+   **Email and password sign-in (optional, alongside Google or instead of it).** People set and reset their password through a link emailed to them, so CV Tailor needs an email service: create a [Resend](https://resend.com) account (free tier), add and verify a domain you own under **Domains**, and create an API key. Without a verified domain, Resend only delivers to your own account's email address, which is enough to test with but not to let others in.
+
 4. **Set environment variables** in the Vercel project (Settings › Environment Variables), then redeploy:
 
    | Variable | Value |
@@ -95,19 +97,21 @@ Hosting it means your chat can reach it from anywhere, including claude.ai on th
    | `GOOGLE_CLIENT_ID` | from the OAuth client |
    | `GOOGLE_CLIENT_SECRET` | from the OAuth client |
    | `SESSION_SECRET` | a long random secret for signing sign-in cookies: `openssl rand -hex 32` |
-   | `OWNER_EMAIL` | your Google email: you can always sign in, and you approve everyone else |
+   | `OWNER_EMAIL` | your email: you can always sign in, and you approve everyone else |
+   | `RESEND_API_KEY` | optional: turns on email and password sign-in |
+   | `EMAIL_FROM` | with Resend: the sender, on your verified domain, e.g. `CV Tailor <noreply@yourdomain.com>` |
    | `MCP_TOKEN` | optional: an extra key for your own chat apps, `openssl rand -hex 24` |
    | `APP_URL` | optional; defaults to the production address |
 
-   Without the Google settings and `SESSION_SECRET`, the deployed app refuses to serve anything.
+   You need Google (`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`), Resend (`RESEND_API_KEY`) or both, plus `SESSION_SECRET` and `OWNER_EMAIL`; without them the deployed app refuses to serve anything.
 
-5. **Sign in** with your Google account. Data from an earlier single-user setup moves to your account.
+5. **Sign in** with Google, or choose **Set or reset your password** on the sign-in page to get a link by email. Data from an earlier single-user setup moves to your account.
 
 6. **Connect your chat**: Activity › How to connect a chat app › **Make my key**. The key is shown once, already filled into the connector address, with instructions for Claude (web, desktop and mobile), Claude Desktop's config file, Claude Code and ChatGPT. Making a new key replaces the old one. `MCP_TOKEN`, if set, also works as your key.
 
 ### Approving other people
 
-Only the owner and the emails you approve can sign in. Open **People** at the bottom of the sidebar, add someone's Google email and send them the app's address; they sign in with Google, get their own empty profile, and connect their own chat with their own key. Each person only ever sees their own data, in the web app and through their key. You can withdraw an approval before it's used, and remove people later, which deletes their data and ends their access at once.
+Only the owner and the emails you approve can sign in. Open **People** at the bottom of the sidebar, add someone's email and send them the app's address; they sign in with Google, or set a password through the emailed link, get their own empty profile, and connect their own chat with their own key. Each person only ever sees their own data, in the web app and through their key. You can withdraw an approval before it's used, and remove people later, which deletes their data and ends their access at once.
 
 **Security.** Each connection key, and `MCP_TOKEN`, reads and changes its owner's data, and sits in the connector URL for apps that only accept a URL, so treat that URL like a password. Changing `SESSION_SECRET` signs everyone out.
 
@@ -163,12 +167,12 @@ src/proxy.ts            Sign-in gate: Google accounts (open to this computer onl
 src/lib/session.ts      Who a request belongs to: signed cookies, and the MCP key's user
 src/lib/users.ts        Sign-in by approved email, approvals and per-user MCP keys
 src/lib/google.ts       Google sign-in (OpenID Connect with PKCE)
+src/lib/passwords.ts    Email and password sign-in: scrypt hashes, emailed set-password links (Resend)
 src/components/workspace/  Sidebar, documents (profile, match, CV, timeline) and the activity panel
 ```
 
 ## Roadmap
 
-- Email or magic-link sign-in as an alternative to Google.
 - A cover letter tool, using the same evidence rules.
 - Interview practice that draws on your evidence and records new stories it uncovers.
 

@@ -138,7 +138,24 @@ function linksFrom(links: { requirement: string; achievementIds: string[] }[], m
   return Object.fromEntries(links.map((l) => [requirementKey(l.requirement), l.achievementIds.filter((id) => ids.has(id))] as const));
 }
 
-const linkShape = z.array(z.object({ requirement: z.string().describe("The requirement exactly as in mustHave or niceToHave"), achievementIds: z.array(z.string()).describe("Achievements that genuinely show it; empty if none") }));
+const linkList = z.array(z.object({ requirement: z.string().describe("The requirement exactly as in mustHave or niceToHave"), achievementIds: z.array(z.string()).describe("Achievements that genuinely show it; empty if none") }));
+const parseJson = (v: string): unknown => {
+  try {
+    return JSON.parse(v);
+  } catch {
+    return null;
+  }
+};
+// Also accepted as JSON text: chat apps holding an older copy of the tool list send new fields as strings.
+const linkShape = z.union([
+  linkList,
+  z.string().transform((v, ctx) => {
+    const parsed = linkList.safeParse(parseJson(v));
+    if (parsed.success) return parsed.data;
+    ctx.addIssue({ code: "custom", message: "Expected a list of { requirement, achievementIds }." });
+    return z.NEVER;
+  }),
+]);
 
 const wordCount = (t: string) => t.split(/\s+/).filter(Boolean).length;
 

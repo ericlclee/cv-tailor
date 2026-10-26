@@ -33,6 +33,26 @@ export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab:
   useEffect(load, [load]);
   useRefresh(load);
 
+  // When the chat finishes reading the listing while you're on Match, move on to the
+  // CV tab, where the next step is choosing the ambition level.
+  // A new title (curating replaces the rough guess) also refreshes the server-rendered
+  // role name used by the prompts and the activity panel.
+  const router = useRouter();
+  const seen = useRef<{ id: string; curated: boolean; title: string } | null>(null);
+  useEffect(() => {
+    if (!data || data.job.id !== id) return;
+    const curated = Boolean(data.job.curatedAt);
+    const title = `${data.job.parsed.title}|${data.job.parsed.company}`;
+    if (seen.current?.id === id) {
+      if (!seen.current.curated && curated && tab === "match") {
+        toast("Your chat has read the listing. Choose the ambition level, then draft your CV.");
+        onTab("cv");
+      }
+      if (seen.current.title !== title) router.refresh();
+    }
+    seen.current = { id, curated, title };
+  }, [data, id, tab, onTab, router]);
+
   const title = data ? [data.job.parsed.title, data.job.parsed.company].filter(Boolean).join(" · ") : "Application";
   return (
     <DocPanel>
@@ -63,7 +83,7 @@ export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab:
       ) : tab === "timeline" ? (
         <TimelineTab data={data} reload={load} />
       ) : (
-        <MatchTab data={data} reload={load} role={role} />
+        <MatchTab data={data} reload={load} role={role} onTab={onTab} />
       )}
     </DocPanel>
   );
@@ -105,7 +125,7 @@ const PILL: Record<Requirement["state"], string> = {
   unclaimed: "bg-[#f2f3f5] text-muted",
 };
 
-function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; role: string }) {
+function MatchTab({ data, reload, role, onTab }: { data: AppData; reload: () => void; role: string; onTab: (tab: AppTab) => void }) {
   const { job, requirements: reqs } = data;
   const [open, setOpen] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -157,9 +177,11 @@ function MatchTab({ data, reload, role }: { data: AppData; reload: () => void; r
           </p>
           <p className="max-w-[200px] text-[15px] leading-snug text-ink-2">requirements backed by your evidence</p>
           <span className="flex-1" />
-          <Button variant="primary" onClick={() => copyText(draftPrompt(role, job.ambition, Boolean(job.cvId)), "Prompt copied")}>
-            {job.cvId ? "Copy redraft prompt" : "Copy draft prompt"}
-          </Button>
+          {curated && (
+            <Button variant="primary" onClick={() => onTab("cv")}>
+              {job.cvId ? "Go to CV" : "Choose ambition and draft"}
+            </Button>
+          )}
         </div>
         {reqs.length === 0 && <p className="px-6 py-5 text-sm text-muted">No specific requirements were found in this job.</p>}
         <ul>
@@ -254,12 +276,12 @@ function CvTab({ data, reload, update, role }: { data: AppData; reload: () => vo
   if (!cv) {
     return (
       <>
-        <AmbitionPicker data={data} update={update} role={role} />
+        <AmbitionPicker data={data} update={update} role={role} step={1} />
         <DocBody>
           <div className="flex flex-col items-start gap-3 rounded-xl border-[1.5px] border-dashed border-control px-6 py-7">
-            <p className="text-lg font-semibold">No CV yet</p>
+            <p className="text-lg font-semibold">2. Ask your chat to draft it</p>
             <p className="text-[15px] leading-relaxed text-muted">
-              Choose how ambitious this CV should be, then ask your chat to draft it. It picks and rewords the achievements from your master profile that fit this job, and rates every line it writes so you can see how far each one goes.
+              Once you&apos;ve chosen the ambition level above, copy this prompt into your chat. It picks and reframes the achievements from your master profile that fit this job at the {ambitionName(job.ambition)} level, and rates every line it writes so you can see how far each one goes.
             </p>
             <Button variant="primary" onClick={() => copyText(draftPrompt(role, job.ambition, false), "Prompt copied")}>
               Copy prompt for your chat
@@ -428,7 +450,7 @@ function Rated({ level, above, on, children }: { level: Ambition; above: boolean
   return <span className={cx("rounded-[3px] px-[2px] [box-decoration-break:clone] [-webkit-box-decoration-break:clone]", HL[level], above && "outline-[1.5px] outline-offset-1 outline-[#b42318] outline-dashed")}>{children}</span>;
 }
 
-function AmbitionPicker({ data, update, role }: { data: AppData; update: (d: AppData) => void; role: string }) {
+function AmbitionPicker({ data, update, role, step }: { data: AppData; update: (d: AppData) => void; role: string; step?: number }) {
   const { job, cv } = data;
   const level = job.ambition;
   const stale = cv && cv.ambition !== undefined && cv.ambition !== level;
@@ -452,7 +474,7 @@ function AmbitionPicker({ data, update, role }: { data: AppData; update: (d: App
     <section aria-labelledby="ambition-h" className="flex flex-col gap-2.5 border-b border-line-soft bg-surface px-7 py-4">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
         <h2 id="ambition-h" className="text-sm font-semibold">
-          Ambition
+          {step ? `${step}. Choose the ambition` : "Ambition"}
         </h2>
         <div role="radiogroup" aria-labelledby="ambition-h" className="flex flex-wrap gap-1 rounded-[10px] bg-paper p-1">
           {AMBITION.map((a) => (

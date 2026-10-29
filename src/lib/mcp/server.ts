@@ -14,6 +14,7 @@ import { analyzeRequirements, backedCount, requirementKey } from "../requirement
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry, ParsedJob } from "../types";
+import { CURATE, GUIDE_TOPICS, GUIDES, guideText } from "./guide";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
 // writing; these tools read and change the data, check CVs against the
@@ -25,34 +26,18 @@ export const appUrl = () => {
   return (process.env.APP_URL || (vercel ? `https://${vercel}` : "http://localhost:3000")).replace(/\/$/, "");
 };
 
-// How the chat curates a listing: once per application, stored, then reused.
-const CURATE = `Curate the listing once. Put the title, company, location and working pattern, seniority and salary in their own fields, and a two-sentence summary of the role in summary. Then write the description: the complete job posting, everything about the job itself, in the posting's own words. Keep every part of it: about the company and team, the role overview, responsibilities, qualifications and nice-to-haves, working location and hours, compensation, perks and benefits, and how they work. Only tidy it: one heading per section (e.g. "About Cohere", "The role", "Responsibilities", "Qualifications", "Perks and benefits"), short paragraphs, and bullet lines starting with "- ". Remove only what isn't the posting: other roles and "similar jobs", applicant counts, site navigation and buttons, the site's own prompts and ads, cookie notices, and equal-opportunity, AI-screening or scam-warning boilerplate. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Finally link each requirement to the user's achievements that genuinely show it (ids from the achievements list), judging meaning rather than wording: "evals" is shown by an achievement about building evaluators, "AI agents" by one about testing agent tool calls. Leave a requirement unlinked if nothing shows it. Save it all with set_job_details.`;
-
+// Kept short: the detail for each stage is in the guides (get_guide), loaded when the chat reaches it.
 const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
 
-Workflow:
-1. Start with get_overview. If the profile is empty, ask the user for their CV (they can attach it to the chat) and record it with update_profile.
-2. Strengthen the profile one question at a time: missing numbers, thin roles, unproven skills, forgotten experience (mentoring, process fixes, side projects). Record answers with update_profile.
-3. When the user shares a job (link or text), call create_application. If it says the listing needs curating, do it straight away: ${CURATE} Curation is stored with the application and marked done, so never repeat it for an application that's already curated (get_application says so) unless the user asks you to, or the listing has changed.
-4. Call get_application to see which requirements have evidence. Ask about each missing must-have. If they have it, add the evidence with update_profile, then link the new achievement to the requirement with link_requirements. If not, call mark_not_claimed.
-5. Before writing a CV, tell the user the application's ambition level (get_application shows it; Elevated unless they chose another) and offer the four levels in a line. If they pick another, set it with update_application. Then write the CV yourself at that level and save it with save_cv. Refine it with edit_cv when the user asks.
-6. Keep the application current with update_application (applied, interview dates, outcome, notes).
+The full instructions for each stage are in guides. Before starting a stage, call get_guide with its topic (once per chat; several topics in one call is fine) and follow it:
+${GUIDE_TOPICS.map((t) => `- ${t}: ${GUIDES[t].use}`).join("\n")}
 
-Ambition (most important): the user decides, per application, how far the CV goes beyond their profile. Write to the application's level, never below it and never above it unless the user asks.
-Calibrate to the role before writing at Polished or above: sketch, for yourself, the top candidate for this job. What scale do they work at (users, revenue, clients, team size)? What seniority markers do they show (strategy, standards across teams, hiring, external stakeholders)? What results would their CV quote? The levels are measured as how much of the gap between the user's profile and that candidate the CV closes. A user who is already close to the role still gets written up to the candidate.
-${AMBITION.map((a) => `- ${a.level} ${a.name}: ${a.writer} Required: ${a.requires}`).join("\n")}
-Rate every bullet and the summary you write on the same 0–3 scale (0 the profile's facts, reframed; 1 numbers pushed up or natural responsibilities added; 2 a clearly more senior version: inflated scope or numbers, initiatives led, adjacent skills; 3 model-candidate content: achievements, figures or responsibilities written for the ideal hire). Rate honestly: the CV tab highlights each line by its rating so the user can see what they'll need to back up. The server raises a rating it can see is too low, and flags underpowered lines (more than one level below the chosen level, or missing what the level requires) to raise with edit_cv.
-Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed).
-Every CV bullet must cite the achievement ids it is based on.
+The master profile comes first: every CV can only be as strong as the detail on record. Set it up from the user's CV, then keep refining it: press for the full story behind each achievement (context, their part, scale, results, recognition), one achievement at a time, and don't settle for vague answers. Hold off saving until the story is complete or the user asks you to update it; then record it worded as strongly and confidently as the facts allow. When the user mentions something new about their work in passing, ask about it the same way.
 
-Writing the CV (at every level): the master profile is the plain factual baseline, written to be complete, not persuasive. The CV is a new document that frames those facts in the best possible way for this one job. Never copy achievement text across.
-- Start from what the job values most (its responsibilities and must-haves). Choose and order bullets by relevance to it, not by the profile's order.
-- Frame every bullet as strongly as the ambition level allows: the outcome or the scale first, then what the user did, with the strongest verb the level supports. Make it read like the work of someone already doing the target job.
-- One tight line of about 15–25 words per bullet. Drop tool lists, internal names and detail this job doesn't care about.
-- Combine related achievements into one bullet, or split a dense one, citing every source id.
-- Use the job's vocabulary for the same thing, but write plainly: concrete nouns, numbers and outcomes, not adjectives. No filler like "spearheaded", "leveraged", "synergy", "results-driven", "passionate", "cutting-edge", "best-in-class", "dynamic" or "innovative", and no stacking several job keywords into one line.
-- The summary is 2–3 sentences pitched at this role, not a recap of the latest job. Order and name skills the way the job does.
-Ambition controls which facts may change, never whether to reframe: a Faithful bullet still reads as strongly framed for this job. The server flags near-copies of the profile and buzzword filler; fix them with edit_cv.
+Workflow: get_overview; set up and refine the profile; when the user shares a job, create_application and curate the listing once; close the must-have gaps; agree the ambition level; write the CV with save_cv; tune it with edit_cv; track progress with update_application.
+
+Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly.
+Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet cites the achievement ids it is based on. Never copy the profile's wording into a CV: rewrite it for the job.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
@@ -167,6 +152,18 @@ export function createMcpServer() {
   // -------------------------------------------------------------------------
   // Reading
 
+  const guideTopic = z.enum(GUIDE_TOPICS);
+  server.registerTool(
+    "get_guide",
+    {
+      title: "Get guide",
+      description: `The full instructions for a stage of CV Tailor, like a playbook: read the guide before starting that stage (once per chat) and follow it. Topics: ${GUIDE_TOPICS.map((t) => `${t} (${GUIDES[t].use})`).join("; ")}. Without a topic, lists them.`,
+      inputSchema: { topic: z.union([guideTopic, z.array(guideTopic)]).optional().describe("One topic, or several, e.g. ['ambition', 'writing'] before drafting") },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ topic }) => text(guideText(topic === undefined ? [] : Array.isArray(topic) ? topic : [topic])),
+  );
+
   server.registerTool(
     "get_overview",
     {
@@ -179,6 +176,7 @@ export function createMcpServer() {
       const m = await getMaster();
       return json({
         webApp: appUrl(),
+        guides: "get_guide has the full instructions for each stage; read 'start' first in a new chat, and 'refine' before asking about the profile.",
         profile: {
           name: m.profile.name,
           strength: `${profileStrength(m)}/100`,
@@ -250,7 +248,7 @@ export function createMcpServer() {
     {
       title: "Update master profile",
       description:
-        "Change the master profile: contact details, entries (roles, projects, education…), achievements and skills. Use it to record an imported CV, answers to questions, or corrections. Only record facts the user gave you. Dates are YYYY-MM or YYYY. Every change can be undone in the web app.",
+        "Change the master profile: contact details, entries (roles, projects, education…), achievements and skills. Use it to record an imported CV, an achievement once you've gathered its full story (or the user asks), or corrections. Only record facts the user gave you. Dates are YYYY-MM or YYYY. Every change can be undone in the web app.",
       inputSchema: {
         summary: z.string().describe("A few words describing the change, shown in the activity feed, e.g. 'Added hackathon to Brightcart'"),
         contact: z
@@ -418,6 +416,7 @@ export function createMcpServer() {
         changes: details.length,
         problems,
         strength: `${profileStrength(after)}/100`,
+        nextStep: "Move on to the next achievement and gather its full story (context, their part, scale, result, recognition) before saving it (get_guide 'refine').",
         nextQuestions: (await refreshSuggestions()).slice(0, 3).map((s) => s.question),
         seeIt: appUrl(),
       });
@@ -536,7 +535,7 @@ export function createMcpServer() {
         backed: `${backedCount(reqs)} of ${reqs.length} requirements have evidence`,
         gaps: reqs.filter((r) => r.state === "gap").map((r) => `${r.name} (${r.weight})`),
         weak: reqs.filter((r) => r.state === "weak").map((r) => r.name),
-        nextStep: "Ask the user about each gap, one at a time. Add evidence with update_profile, or call mark_not_claimed if they don't have it.",
+        nextStep: "Ask the user about each gap, one at a time (get_guide 'gaps'). Add evidence with update_profile, or call mark_not_claimed if they don't have it.",
         link: appLink(job.id),
       });
     },
@@ -594,7 +593,7 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Read get_guide 'ambition' and 'writing' first. Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
         headline: z.string().describe("Short professional headline aimed at this job"),
@@ -660,7 +659,7 @@ export function createMcpServer() {
         unknownEntryIds: unknown.length ? unknown : undefined,
         cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: `${ambition.underpowered || ambition.uncoveredMustHaves || copied.length || filler.length ? `Before showing the user, fix with edit_cv: ${[ambition.underpowered && `${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""} (raise each to ${ambition.chosen}: ${ambition.required})`, ambition.uncoveredMustHaves && `must-haves not covered yet: ${ambition.uncoveredMustHaves.join(", ")} (add a line for each the user's work touches; ask the user about the rest)`, copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
+        tellTheUser: `${ambition.underpowered || ambition.uncoveredMustHaves || copied.length || filler.length ? `Before showing the user, fix with edit_cv (get_guide 'tuning' explains each check): ${[ambition.underpowered && `${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""} (raise each to ${ambition.chosen}: ${ambition.required})`, ambition.uncoveredMustHaves && `must-haves not covered yet: ${ambition.uncoveredMustHaves.join(", ")} (add a line for each the user's work touches; ask the user about the rest)`, copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -669,7 +668,7 @@ export function createMcpServer() {
     "edit_cv",
     {
       title: "Edit CV",
-      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted.",
+      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted. get_guide 'tuning' covers fixing what the checks flag and handling the user's change requests.",
       inputSchema: {
         application_id: z.string(),
         summary_of_change: z.string().describe("A few words for the activity feed, e.g. 'Shortened Brightcart'"),
@@ -728,7 +727,7 @@ export function createMcpServer() {
       const filler = buzzwords(content);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
       const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler"].filter(Boolean);
-      return json({ saved: true, applied: details.length, ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")}.` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      return json({ saved: true, applied: details.length, ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

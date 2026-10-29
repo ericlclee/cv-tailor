@@ -129,6 +129,7 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 
 | Tool | What it does |
 |---|---|
+| `get_guide` | The full instructions for a stage, loaded when the chat reaches it, like a skill: `start`, `profile`, `refine`, `curate`, `gaps`, `ambition`, `writing`, `tuning`, `tracking` |
 | `get_overview` | Profile strength, questions that would strengthen it, applications and their ids |
 | `get_profile` | Full profile with entry and achievement ids |
 | `update_profile` | Add, change or remove contact details, entries, achievements and skills |
@@ -140,6 +141,8 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 | `save_cv` | Save a CV your chat wrote. Every bullet cites achievement ids and carries an ambition rating |
 | `edit_cv` | Replace, remove or add bullets; change headline or summary |
 | `update_application` | Stage changes, dated timeline events, notes, and the CV's ambition level |
+
+**Guides** (`src/lib/mcp/guide.ts`). The instructions sent when a chat connects are short: the profile comes first, the workflow, the ambition levels and the hard limits. The detail for each stage (how to set up the profile and press for the full story behind each achievement, curate a listing, write to each ambition level, fix what the checks flag, handle requests like "make it punchier" or "one page") is in guides the chat loads with `get_guide` before that stage. `save_cv`, `edit_cv` and their results point to the right guide. Edit a guide and redeploy to change how every connected chat works.
 
 **Checks on every CV** (`src/lib/tailor.ts`). They flag lines to prepare for; they don't block anything:
 - Titles, employers and dates come from the profile, never from the chat.
@@ -153,7 +156,8 @@ The warnings go back to your chat and appear in the CV view.
 ## Code map
 
 ```
-src/lib/mcp/server.ts   MCP tools and the instructions sent to your chat
+src/lib/mcp/server.ts   MCP tools and the short instructions sent to your chat
+src/lib/mcp/guide.ts    The guides get_guide returns: the full instructions for each stage
 src/app/mcp/route.ts    Streamable HTTP endpoint (stateless); runs each request as the key's user
 src/lib/activity.ts     Change log with snapshot-based undo
 src/lib/tailor.ts       Turns a CV plan into CV content and checks it against the evidence

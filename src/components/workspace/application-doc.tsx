@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AMBITION, ambitionName, type Ambition, type CvRating } from "@/lib/ambition";
 import { api } from "@/lib/client/api";
 import { emitRefresh, useRefresh } from "@/lib/client/bus";
+import { capitalize } from "@/lib/format";
 import type { Requirement } from "@/lib/requirements";
 import { CLOSED_STATUSES, TRACK, type AppStatus, type CvBullet, type CvDraft, type Job, type KeywordReport } from "@/lib/types";
 import { toast, toastError } from "../toast";
@@ -194,7 +195,7 @@ function MatchTab({ data, reload, role, onTab }: { data: AppData; reload: () => 
                 className={cx("flex min-h-12 w-full items-center gap-3.5 px-6 py-3 text-left", open === r.name ? "bg-[#f2f4ff]" : "hover:bg-[#fafbfc]")}
               >
                 <span aria-hidden="true" className={cx("size-3 shrink-0 rounded-full", DOT[r.state])} />
-                <span className="flex-1 text-[15px] font-medium">{r.name}</span>
+                <span className="flex-1 text-[15px] font-medium">{capitalize(r.name)}</span>
                 <span className="font-mono text-[11px] tracking-[0.05em] text-faint uppercase">{r.weight}</span>
                 <span className={cx("rounded-full px-2.5 py-0.5 text-[13px] font-medium whitespace-nowrap", PILL[r.state])}>{r.note}</span>
               </button>

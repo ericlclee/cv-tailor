@@ -26,3 +26,12 @@ export function timeAgo(iso: string) {
 export function hasNumber(t: string) {
   return /\d|\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|dozens|hundreds?|thousands?|millions?)\b/i.test(t);
 }
+
+// Names deliberately styled in lower case.
+const LOWERCASE_NAMES = new Set(["dbt", "npm", "pnpm", "pandas", "numpy", "scikit-learn", "pytest", "webpack"]);
+
+/** First letter capitalised, for display ("python" → "Python"). Names styled with inner capitals ("iOS", "eBay") or in lower case ("dbt") are left alone. */
+export function capitalize(t: string) {
+  const first = t.split(/\s/)[0];
+  return /[A-Z]/.test(first.slice(1)) || LOWERCASE_NAMES.has(first) ? t : t.charAt(0).toUpperCase() + t.slice(1);
+}

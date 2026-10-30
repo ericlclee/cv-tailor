@@ -8,9 +8,11 @@ import { masterForPrompt, refreshSuggestions } from "../coach";
 import { applyEdits, prepareEdits } from "../cv-edits";
 import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills, type Master } from "../db";
 import { entryKind, extractMetrics, toAchievement, toEntry } from "../entries";
+import { pageFit, type PageFit } from "../export";
 import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount, requirementKey } from "../requirements";
+import { renderCv } from "../render";
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvContent, Entry, ParsedJob } from "../types";
@@ -37,7 +39,7 @@ The master profile comes first: every CV can only be as strong as the detail on 
 Workflow: get_overview; set up and refine the profile; when the user shares a job, create_application and curate the listing once; close the must-have gaps; agree the ambition level; write the CV with save_cv; tune it with edit_cv; track progress with update_application.
 
 Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly.
-Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet cites the achievement ids it is based on. Never copy the profile's wording into a CV: rewrite it for the job.
+Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet cites the achievement ids it is based on. A CV is one page at most (enforced). Never copy the profile's wording into a CV: rewrite it for the job.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
@@ -142,6 +144,14 @@ const linkShape = z.union([
   }),
 ]);
 
+/** One page is a hard limit: how a CV fits, in words for the chat. */
+function pageNote(fit: PageFit) {
+  if (fit.tightened) return "Fits one page with the layout tightened, so the page is full: cut a line for every line you add.";
+  return `Fits one page, with room for about ${fit.spareLines} more line${fit.spareLines === 1 ? "" : "s"}.`;
+}
+const overPage = (fit: PageFit, what: string) =>
+  `Not ${what}: this CV would run about ${fit.overLines} line${fit.overLines === 1 ? "" : "s"} past one page, even with the layout tightened, and CVs are limited to one page. Cut at least that much: drop the least relevant bullets first, then older roles (keep the lines that cover must-haves), and keep each bullet to one line. Then try again (get_guide 'tuning').`;
+
 const wordCount = (t: string) => t.split(/\s+/).filter(Boolean).length;
 
 const entryLabel = (e: Pick<Entry, "title" | "organization">) => [e.title, e.organization].filter(Boolean).join(", ");
@@ -231,7 +241,7 @@ export function createMcpServer() {
         source: job.url || "pasted description",
         requirements: { backed: `${backedCount(reqs)} of ${reqs.length}`, list: reqs.map((r) => ({ name: r.name, weight: r.weight, state: r.state, evidence: r.proofs.map((p) => ({ achievementId: p.achievementId, text: p.text })) })) },
         notClaimed: job.unclaimed,
-        cv: cv && rating ? { ...cvView(cv.content, rating), ambition: ambitionReport(cv.content, rating, job.ambition, m, job), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%` } : null,
+        cv: cv && rating ? { ...cvView(cv.content, rating), ambition: ambitionReport(cv.content, rating, job.ambition, m, job), warnings: cvWarnings(cv.content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(cv.content), job.parsed).score}%`, page: ((f) => (f.fits ? pageNote(f) : `Over one page by about ${f.overLines} lines (edited by hand): cut lines with edit_cv.`))(pageFit(renderCv(cv.content))) } : null,
         timeline: job.events.map((e) => ({ at: e.at, title: e.title, detail: e.detail })),
         notes: job.notes,
         links: { view: appLink(job.id), cv: appLink(job.id, "cv"), ...(cv ? { pdf: `${appUrl()}/api/cvs/${cv.id}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cv.id}/export?format=docx` } : {}) },
@@ -593,7 +603,7 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Read get_guide 'ambition' and 'writing' first. Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. Typical one-page CV: 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Read get_guide 'ambition' and 'writing' first. Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. CVs are limited to one page: a CV that won't fit, even with the layout tightened, is refused, and the result says how much room is left. Typically 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
         headline: z.string().describe("Short professional headline aimed at this job"),
@@ -622,6 +632,8 @@ export function createMcpServer() {
       if (!m.entries.length) return fail("The master profile is empty. Build it first with update_profile.");
       const unknown = i.entries.filter((e) => !m.entries.some((x) => x.id === e.entryId)).map((e) => e.entryId);
       const { content, unbackedSkills } = buildCvFromPlan(m, { ...i, entries: i.entries.map((e) => ({ ...e, include: e.include ?? true })) });
+      const fit = pageFit(renderCv(content));
+      if (!fit.fits) return fail(overPage(fit, "saved"));
 
       const t = tracker();
       const existing = job.cvId ? await get("cvs", job.cvId) : null;
@@ -650,6 +662,7 @@ export function createMcpServer() {
         saved: true,
         bullets,
         keywordCoverage: `${report.score}%`,
+        page: pageNote(fit),
         missingMustHaves: report.mustHaveMissing,
         ambition,
         copiedFromProfile: copied.length ? copied : undefined,
@@ -668,7 +681,7 @@ export function createMcpServer() {
     "edit_cv",
     {
       title: "Edit CV",
-      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted. get_guide 'tuning' covers fixing what the checks flag and handling the user's change requests.",
+      description: "Change an application's CV: replace, remove or add bullets (use ids from get_application), or change the headline or summary. Give sourceIds and an ambition rating for new or rewritten bullets so they can be checked and highlighted. Edits that would push the CV past one page are refused. get_guide 'tuning' covers fixing what the checks flag and handling the user's change requests.",
       inputSchema: {
         application_id: z.string(),
         summary_of_change: z.string().describe("A few words for the activity feed, e.g. 'Shortened Brightcart'"),
@@ -717,6 +730,8 @@ export function createMcpServer() {
         content.summary = i.summary;
         content.summaryAmbition = toAmbition(i.summaryAmbition, 0);
       }
+      const fit = pageFit(renderCv(content));
+      if (!fit.fits) return fail(overPage(fit, "changed"));
       await put("cvs", { ...cv, content, updatedAt: new Date().toISOString() });
 
       const details: ActivityDetail[] = edits.map((e) => ({ label: e.op === "add" ? "Added line" : e.op === "remove" ? "Removed line" : "Rewrote line", before: e.previous, after: e.op === "remove" ? undefined : e.text }));
@@ -727,7 +742,7 @@ export function createMcpServer() {
       const filler = buzzwords(content);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
       const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler"].filter(Boolean);
-      return json({ saved: true, applied: details.length, ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      return json({ saved: true, applied: details.length, page: pageNote(fit), ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

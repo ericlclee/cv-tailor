@@ -132,7 +132,7 @@ Hard limits at every level, because they are checked and get offers withdrawn: n
 - Combine related achievements into one bullet, or split a dense one, citing every source id.
 - Use the job's vocabulary for the same thing, but write plainly: concrete nouns, numbers and outcomes, not adjectives. No filler like "spearheaded", "leveraged", "synergy", "results-driven", "passionate", "cutting-edge", "best-in-class", "dynamic" or "innovative", and no stacking several job keywords into one line.
 - The headline names the target role. The summary is 2–3 sentences pitched at this role, not a recap of the latest job, with no first person. Order and name skills the way the job does, grouped in a few categories.
-- Length: one page for most people: 3–5 bullets for the most relevant recent roles, 1–2 for older ones, and leave out entries that don't help this job (they stay in the profile). Experience first, unless the user is a student or changing career, when projects or education can lead.
+- Length: one page, always. It's a hard limit: save_cv and edit_cv refuse a CV that won't fit, even with the layout tightened, and say how many lines to cut. Plan for it: 3–5 bullets for the most relevant recent roles, 1–2 for older ones, each bullet one line, and leave out entries that don't help this job (they stay in the profile). Spend the space on what this job values most. Experience first, unless the user is a student or changing career, when projects or education can lead.
 - Every bullet lists the achievement ids it is based on, and carries your 0–3 ambition rating (guide: ambition).
 
 Ambition controls which facts may change, never whether to reframe: a Faithful bullet still reads as strongly framed for this job.
@@ -144,6 +144,8 @@ After save_cv, fix everything it flags before showing the user (guide: tuning), 
     title: "Tuning a CV",
     use: "acting on the checks after save_cv or edit_cv, and on the user's change requests",
     body: `Use edit_cv for changes to particular lines, the headline or the summary; it needs the bullet and item ids from get_application (or the last save_cv result). Use save_cv to rewrite the whole CV: when the ambition level changes, when the user wants a different focus, or to reorder or swap which roles appear (edit_cv can't reorder). Give every new or rewritten line its sourceIds and a fresh, honest ambition rating.
+
+One page is a hard limit. Every result says how full the page is ("room for about N more lines", or full). When it's full, every line you add needs a line cut. If a save or edit is refused for running over, cut at least the lines it names (the least relevant bullets first, then older roles, never the lines that cover must-haves) and try again.
 
 Fixing what the checks flag (save_cv and edit_cv return these; fix them before showing the user):
 - underpowered: the line is too timid for the chosen level. Rewrite it to the level's requirement: add the figure, widen the scope, state the business outcome or the leadership. Don't just swap in a stronger verb.
@@ -158,7 +160,8 @@ Fixing what the checks flag (save_cv and edit_cv return these; fix them before s
 Common requests:
 - "Stronger", "punchier", "undersells me": raise the lines they mean within the level (outcome first, the figure, the scope). If they're at the level's ceiling, offer the next level up.
 - "I can't defend this", "too much": tone those lines down and rate them lower, or offer a lower level for the whole CV.
-- "Shorter", "one page": remove the least relevant bullets first, then whole older roles. Keep the lines that cover must-haves.
+- "Shorter": remove the least relevant bullets first, then whole older roles. Keep the lines that cover must-haves.
+- "Add X" when the page is full: say what you'd cut to make room, cut it in the same edit, and tell the user.
 - "Focus more on X": move lines about X up and make more of them; with many changes, rewrite with save_cv.
 - "Change the summary or headline": edit_cv with the new text, and summaryAmbition for a new summary.
 - A different level: update_application with the level, then rewrite with save_cv.

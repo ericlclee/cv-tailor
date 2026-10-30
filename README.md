@@ -144,6 +144,8 @@ Every change shows up in the web app's **Activity** panel with **Undo**. Undo is
 
 **Guides** (`src/lib/mcp/guide.ts`). The instructions sent when a chat connects are short: the profile comes first, the workflow, the ambition levels and the hard limits. The detail for each stage (how to set up the profile and press for the full story behind each achievement, curate a listing, write to each ambition level, fix what the checks flag, handle requests like "make it punchier" or "one page") is in guides the chat loads with `get_guide` before that stage. `save_cv`, `edit_cv` and their results point to the right guide. Edit a guide and redeploy to change how every connected chat works.
 
+**One page, always** (`src/lib/export.ts`). `save_cv` and `edit_cv` measure the real PDF layout and refuse a CV that won't fit on one A4 page, saying how many lines to cut. When a CV is close, the PDF and Word files tighten spacing, then type size and margins slightly, to keep it on one page. The CV tab shows how full the page is. Hand edits in the web app aren't blocked, but the CV tab warns when they push it over.
+
 **Checks on every CV** (`src/lib/tailor.ts`). They flag lines to prepare for; they don't block anything:
 - Titles, employers and dates come from the profile, never from the chat.
 - Numbers that aren't in a bullet's cited sources are flagged.

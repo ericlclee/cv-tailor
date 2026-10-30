@@ -6,6 +6,7 @@ import { AMBITION, ambitionName, type Ambition, type CvRating } from "@/lib/ambi
 import { api } from "@/lib/client/api";
 import { emitRefresh, useRefresh } from "@/lib/client/bus";
 import { capitalize } from "@/lib/format";
+import type { PageFit } from "@/lib/export";
 import type { Requirement } from "@/lib/requirements";
 import { CLOSED_STATUSES, TRACK, type AppStatus, type CvBullet, type CvDraft, type Job, type KeywordReport } from "@/lib/types";
 import { toast, toastError } from "../toast";
@@ -21,6 +22,7 @@ interface AppData {
   cv: CvDraft | null;
   report: KeywordReport | null;
   rating: CvRating | null;
+  page: PageFit | null;
 }
 
 export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab: AppTab; role: string; onTab: (tab: AppTab) => void }) {
@@ -322,7 +324,7 @@ function CvTab({ data, reload, update, role }: { data: AppData; reload: () => vo
   const shown = cv.content.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : []));
   const counts = AMBITION.map((a) => shown.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length);
   const mark = (level: Ambition) => ({ level, above: highlights && level > job.ambition, on: highlights });
-  const pageEstimate = cv.content.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : [])).length;
+  const page = data.page;
 
   return (
     <>
@@ -330,7 +332,12 @@ function CvTab({ data, reload, update, role }: { data: AppData; reload: () => vo
         <span className="text-sm text-ink-2">Edited {new Date(cv.updatedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
         {report && (
           <span className="text-sm text-muted">
-            · {report.matched.length} of {report.matched.length + report.missing.length} job keywords · about {pageEstimate > 14 ? 2 : 1} page{pageEstimate > 14 ? "s" : ""}
+            · {report.matched.length} of {report.matched.length + report.missing.length} job keywords
+          </span>
+        )}
+        {page && (
+          <span className={cx("text-sm", page.fits ? "text-muted" : "font-medium text-[#b42318]")}>
+            {page.fits ? `· One page${page.tightened ? ", full" : page.spareLines ? `, room for ${page.spareLines} more line${page.spareLines === 1 ? "" : "s"}` : ""}` : `· Over one page by about ${page.overLines} line${page.overLines === 1 ? "" : "s"}: hide some lines to fit`}
           </span>
         )}
         <span className="flex-1" />

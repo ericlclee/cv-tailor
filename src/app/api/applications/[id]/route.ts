@@ -2,8 +2,10 @@ import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { changeStatus, getApplication, saveJob } from "@/lib/applications";
 import { get, getMaster, list, remove } from "@/lib/db";
+import { pageFit } from "@/lib/export";
 import { handler, HttpError } from "@/lib/http";
 import { cvPlainText, keywordReport } from "@/lib/keywords";
+import { renderCv } from "@/lib/render";
 import { analyzeRequirements } from "@/lib/requirements";
 import { rateCv } from "@/lib/tailor";
 
@@ -17,6 +19,7 @@ async function load(id: string) {
     cv,
     report: cv ? keywordReport(cvPlainText(cv.content), job.parsed) : null,
     rating: cv ? rateCv(cv.content, m) : null,
+    page: cv ? pageFit(renderCv(cv.content)) : null,
   };
 }
 

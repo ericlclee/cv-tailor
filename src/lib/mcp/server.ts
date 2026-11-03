@@ -39,7 +39,7 @@ The master profile comes first: every CV can only be as strong as the detail on 
 
 Workflow: get_overview; set up and refine the profile; when the user shares a job, create_application and curate the listing once; close the must-have gaps; agree the ambition level; write the CV with save_cv; tune it with edit_cv; track progress with update_application.
 
-Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly.
+Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly. Above Faithful, make up the figures for work that wasn't measured, as far as the level allows.
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet is built in the XYZ format too, and cites the achievement ids it is based on. A CV is one page at most (enforced). Never copy the profile's wording into a CV: rewrite it for the job.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
@@ -430,7 +430,7 @@ export function createMcpServer() {
         changes: details.length,
         problems,
         strength: `${profileStrength(after)}/100`,
-        ...(noNumber.length ? { noNumber, needsY: `${noNumber.length} achievement${noNumber.length === 1 ? " has" : "s have"} no number yet. In the XYZ format, Y (the number that proves the result) is what makes an achievement convincing: ask for it (time, money, volume, quality or reach; an estimate is fine) before moving on.` } : {}),
+        ...(noNumber.length ? { noNumber, needsY: `${noNumber.length} achievement${noNumber.length === 1 ? " has" : "s have"} no number yet. In the XYZ format, Y (the number that proves the result) is what makes an achievement convincing: ask for it (time, money, volume, quality or reach; an estimate is fine). If the work genuinely wasn't measured, record its concrete scale instead: CVs above Faithful fill in the figure.` } : {}),
         nextStep: "Move on to the next achievement and gather its full story in the XYZ format (result, the number that proves it, what they did, with context and scale) before saving it (get_guide 'refine').",
         nextQuestions: (await refreshSuggestions()).slice(0, 3).map((s) => s.question),
         seeIt: appUrl(),

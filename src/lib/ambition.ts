@@ -23,8 +23,8 @@ export const AMBITION: { level: Ambition; name: string; line: string; setting: s
     level: 1,
     name: "Polished",
     line: "Numbers pushed up, natural responsibilities added",
-    setting: "Already stretches: every line carries an impressive figure, numbers are pushed up, and the responsibilities that come with your work are claimed outright.",
-    writer: "Push every number up to an impressive round figure and claim the responsibilities that naturally come with the user's work (ownership, stakeholders, decisions, mentoring) outright. Close a third of the gap to the target candidate.",
+    setting: "Already stretches: every line carries an impressive figure (made up where your work wasn't measured), numbers are pushed up, and the responsibilities that come with your work are claimed outright.",
+    writer: "Push every number up to an impressive round figure and claim the responsibilities that naturally come with the user's work (ownership, stakeholders, decisions, mentoring) outright. Where the work wasn't measured, make up a credible figure: what someone doing this work at this company would plausibly achieve. Close a third of the gap to the target candidate.",
     requires: "Every bullet carries a figure (%, £, time, volume, users, team size); add a credible estimate where the profile has none.",
   },
   {
@@ -32,7 +32,7 @@ export const AMBITION: { level: Ambition; name: string; line: string; setting: s
     name: "Elevated",
     line: "A level more senior: bigger scope, impact and numbers",
     setting: "Presents you a clear level more senior than your profile: business impact in money, time or scale on most lines, leadership and influence in every role, and adjacent experience mapped onto every requirement.",
-    writer: "Present the user a clear level more senior than the profile. Close two thirds of the gap to the target candidate: inflate scale and numbers meaningfully, state business impact (revenue, cost, time saved, risk, adoption), claim leadership of initiatives they took part in and influence beyond their team, and map adjacent experience and lightly used skills onto every requirement in the job's exact terms.",
+    writer: "Present the user a clear level more senior than the profile. Close two thirds of the gap to the target candidate: inflate scale and numbers meaningfully, state business impact (revenue, cost, time saved, risk, adoption), claim leadership of initiatives they took part in and influence beyond their team, and map adjacent experience and lightly used skills onto every requirement in the job's exact terms. Where the work wasn't measured, make up figures that show business impact at a level more senior.",
     requires: "Every bullet carries a figure and goes beyond its source (a bigger number, wider scope or a new outcome); most bullets state business impact; every role has at least one leadership or influence claim.",
   },
   {
@@ -40,7 +40,7 @@ export const AMBITION: { level: Ambition; name: string; line: string; setting: s
     name: "Bold",
     line: "The target candidate: written for the ideal hire",
     setting: "Written as the top candidate for this role would be, built on your real roles and kind of work: every requirement covered, at the scale, seniority and results the role expects of its best hire.",
-    writer: "Write the user as the top candidate for this role. Use the target sketch: their scale, seniority markers (strategy, standards across teams, hiring, external clients) and the results they would show, and write every line at that level, grown out of the user's real roles and kind of work. Cover every must-have the user's work touches with a convincing achievement. Never settle for restating the profile with more confidence: if a line reads like the profile, it isn't Bold.",
+    writer: "Write the user as the top candidate for this role. Use the target sketch: their scale, seniority markers (strategy, standards across teams, hiring, external clients) and the results they would show, and write every line at that level, grown out of the user's real roles and kind of work. Cover every must-have the user's work touches with a convincing achievement. Make up figures wherever the work wasn't measured, at the scale the role's best hire would quote. Never settle for restating the profile with more confidence: if a line reads like the profile, it isn't Bold.",
     requires: "Every bullet is written at the target candidate's level, with a figure at the scale the role expects; every role shows senior markers; every must-have the user's work touches is covered (ask the user about any it doesn't touch).",
   },
 ];

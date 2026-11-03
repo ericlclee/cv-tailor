@@ -7,6 +7,9 @@ import { AMBITION } from "../ambition";
 // How the chat curates a listing: once per application, stored, then reused.
 export const CURATE = `Curate the listing once. Put the title, company, location and working pattern, seniority and salary in their own fields, and a two-sentence summary of the role in summary. Then write the description: the complete job posting, everything about the job itself, in the posting's own words. Keep every part of it: about the company and team, the role overview, responsibilities, qualifications and nice-to-haves, working location and hours, compensation, perks and benefits, and how they work. Only tidy it: one heading per section (e.g. "About Cohere", "The role", "Responsibilities", "Qualifications", "Perks and benefits"), short paragraphs, and bullet lines starting with "- ". Remove only what isn't the posting: other roles and "similar jobs", applicant counts, site navigation and buttons, the site's own prompts and ads, cookie notices, and equal-opportunity, AI-screening or scam-warning boilerplate. Then list the requirements: mustHave and niceToHave as short ATS terms (1–4 words, the job's exact spelling), splitting combined ones ("Python and SQL" becomes "Python", "SQL"), with years of experience and education in their own fields. Finally link each requirement to the user's achievements that genuinely show it (ids from the achievements list), judging meaning rather than wording: "evals" is shown by an achievement about building evaluators, "AI agents" by one about testing agent tool calls. Leave a requirement unlinked if nothing shows it. Save it all with set_job_details.`;
 
+// Every achievement and every CV bullet is built in this shape.
+export const XYZ = `the XYZ format: "Accomplished [X], as measured by [Y], by doing [Z]". X is the result, Y the number that proves it, Z what the user did to get it`;
+
 export const GUIDE_TOPICS = ["start", "profile", "refine", "curate", "gaps", "ambition", "writing", "tuning", "tracking"] as const;
 export type GuideTopic = (typeof GUIDE_TOPICS)[number];
 
@@ -37,10 +40,11 @@ Setting it up:
 1. Ask for their CV (attached or pasted). Also ask for anything else that shows their work: an older CV, their LinkedIn profile, performance reviews, a portfolio, project write-ups. These often hold achievements the current CV dropped.
 2. Record everything with update_profile: every role (including short, part-time, freelance and internships), project, degree, certification and volunteering, with title, organisation, location and dates (YYYY-MM or YYYY). Keep older and minor ones: each CV chooses what to show.
 3. Split every bullet into separate achievements, one per distinct thing they did, with the skills, tools and methods each shows. Keep their numbers exactly. Record the CV straight away: it's evidence they've already given. Each achievement gets its full, strongly worded version once refining has drawn out the rest of its story.
-4. Give each role a description: the context a reader needs, such as what the organisation or team does, its size, the user's remit and who they reported to. Ask if the CV doesn't say.
-5. Add the skills they've really used, and fill in their contact details.
+4. Note which achievements have no number. Every achievement is built in ${XYZ}, so an achievement without a Y is unfinished: those are the first questions when refining.
+5. Give each role a description: the context a reader needs, such as what the organisation or team does, its size, the user's remit and who they reported to. Ask if the CV doesn't say.
+6. Add the skills they've really used, and fill in their contact details.
 
-Then tell them the profile strength (from update_profile or get_overview) and go straight on to refining it (guide: refine). An imported CV is only the starting point: the detail that makes a CV strong comes from questions.`,
+Then tell them the profile strength (from update_profile or get_overview) and how many achievements still need a number, and go straight on to refining it (guide: refine). An imported CV is only the starting point: the detail that makes a CV strong comes from questions.`,
   },
 
   refine: {
@@ -51,24 +55,31 @@ Then tell them the profile strength (from update_profile or get_overview) and go
 Working through it:
 - One achievement at a time, starting with the most recent and most important roles (or the ones that matter most for a job the user is targeting). Ask up to three short, specific questions about it in one message, and keep going until it has the full story.
 - Hold off recording while you're still gathering. Don't save half a story after each answer. Record the achievement once, with everything you've gathered, when:
-  - its story is complete: the context, their own part, the scale and a result (ideally a number), plus recognition if there was any;
+  - its story is complete: X, Y and Z (below), with the context and scale, plus recognition if there was any. It isn't complete without at least one number for Y, so keep pressing for one;
   - or the user asks you to update it;
   - or the user has nothing more to add (they don't know, or want to move on);
   - or the conversation is about to change topic or end, so nothing they told you is lost.
 - Then record it in one update_profile call (updateAchievements with the full new text, and its skills), tell the user in a line what you saved, and move on to the next one.
 - Now and then, say where you are: "Brightcart: 3 of 5 achievements complete. Next: the pricing dashboard."
 
-The full story of an achievement (ask about whatever is missing):
+The full story of an achievement, gathered in ${XYZ} (ask about whatever is missing):
+- X, the result: what changed because of them. Who uses it now, and whether it's still in use.
+- Y, the number that proves it: before and after, % or £, time saved, errors cut, adoption. Aim for at least one, and two when you can (a result and a scale).
+- Z, what they did: their own actions, what they decided, owned or led, and who they had to convince; the methods, tools and technologies (recorded as skills on the achievement). Turn "we", "helped" and "worked on" into their own actions.
 - Context: the problem or goal, why it mattered, what things were like before.
-- Their part: what they did themselves, what they decided, owned or led, and who they had to convince. Turn "we", "helped" and "worked on" into their own actions.
 - Scale: users, customers, revenue or budget, data volume, team size, systems, regions, how long it took.
-- Result: what changed, in numbers where possible: before and after, % or £, time saved, errors cut, adoption, who uses it now, whether it's still in use.
 - Recognition: praise, a promotion, an award, other teams adopting it, being asked to repeat or teach it.
-- How: the methods, tools and technologies, recorded as skills on the achievement.
 
 Pressing for detail:
 - A vague answer: ask again from a different angle, with a concrete example of what you mean ("Roughly how many people used it each week?" rather than "What was the impact?").
-- No number: help them estimate with a range, a before and after, a count of something (hours a week, tickets, users, reports) or a comparison ("about twice as fast"). Record it with "about". Ask where the exact figure could be found (a dashboard, a review, a launch email) so they can check it later.
+- No number (Y): never accept "I don't have numbers" on the first ask. Offer the kinds of figure that fit the work, and ask for the one they can answer:
+  - Time: hours saved a week, turnaround before and after, deadlines met, how long it took.
+  - Money: revenue, cost saved, budget managed, deal size.
+  - Volume: users, customers, requests, records, reports, releases, people trained.
+  - Quality: errors or incidents cut, accuracy, uptime, satisfaction or review scores.
+  - Reach: teams, regions or % of the company using it.
+  Help them estimate with a range, a before and after, a count of something or a comparison ("about twice as fast"), and record it with "about". Only when they truly can't give any figure, record the concrete scale instead (who and how many it affected) and move on.
+- Evidence: ask where each number comes from (a dashboard, a performance review, an OKR, a launch email, ticket counts) and note it briefly at the end, e.g. "(from the Q3 business review)", so they can find it before an interview.
 - "It was nothing" or "just my job": ask what would have happened without them, and who benefited. Routine work often hides the best achievements.
 - Unsure whether it counts: record it anyway. Each CV decides what to use.
 - A thin role: ask what a normal week looked like, then what they're proudest of, and what they fixed, improved, automated, built, launched, taught or led, and what people came to them for.
@@ -76,7 +87,8 @@ Pressing for detail:
 - Forgotten experience: mentoring, hiring and interviewing, onboarding others, process changes, incidents handled, documentation, talks, side projects, courses, volunteering, awards.
 
 Recording (once the story is complete):
-- Word each achievement as strongly and confidently as the facts allow. Lead with the result or the scale. State their ownership plainly, with the strongest verb that's true (led, built, designed, launched, cut, grew, decided, convinced). Include every number, scale and outcome they gave. Two or three sentences is fine when the story needs them.
+- Write each achievement in XYZ order: the result (X), the number that proves it (Y), then what they did (Z), followed by the context and scale. For example: "Cut month-end close from 6 days to 2, saving the 5-person finance team about 30 hours a month, by automating the bank reconciliation in Python and SQL that had been done by hand for 4 years."
+- Word it as strongly and confidently as the facts allow. State their ownership plainly, with the strongest verb that's true (led, built, designed, launched, cut, grew, decided, convinced). Include every number, scale and outcome they gave. Two or three sentences is fine when the story needs them.
 - No hedging or underselling: never "helped with", "was involved in", "assisted", "tried to" or "some", when they told you what they actually did. If they owned it, say they owned it.
 - Confident, not inflated, and plain rather than buzzwords: never add facts, numbers or responsibilities they didn't give you, and no filler like "spearheaded", "leveraged" or "results-driven". Stretching beyond the facts is done per CV, at the ambition level the user picks; the profile is the evidence it works from.
 - If an answer reveals a separate achievement, add it on its own.
@@ -100,7 +112,7 @@ Curation is stored with the application and marked done, so never repeat it for 
 - Go through the gaps one question at a time, must-haves first: "Have you done anything with X, even briefly, in another role, a course or a side project?" Adjacent work counts.
 - If they have: draw out the full story as the refine guide describes (their part, scale, result), record it once it's complete, worded strongly, with update_profile, then link it to the requirement with link_requirements.
 - If they haven't: call mark_not_claimed, so no CV ever claims it.
-- For weak ones, ask for a figure or a concrete example that would prove them.
+- For weak ones (proof without a number), ask for the Y: the figure that would prove them.
 - If a link is wrong (the achievement doesn't really show the requirement), fix it with link_requirements.
 Don't hold the CV up for nice-to-haves: once the must-haves are settled, offer to draft.`,
   },
@@ -127,7 +139,8 @@ Hard limits at every level, because they are checked and get offers withdrawn: n
     body: `The master profile is the complete factual record, worded strongly but for no job in particular. The CV is a new document that frames those facts in the best possible way for this one job. Never copy achievement text across: rewrite it around what this job values.
 
 - Start from what the job values most (its responsibilities and must-haves). Choose and order bullets by relevance to it, not by the profile's order.
-- Frame every bullet as strongly as the ambition level allows: the outcome or the scale first, then what the user did, with the strongest verb the level supports. Make it read like the work of someone already doing the target job.
+- Build every bullet in ${XYZ}. Lead with the result this job cares about, prove it with the number, then say how, with the strongest verb the level supports: "Cut month-end close from 6 days to 2 by automating bank reconciliation in Python". Make it read like the work of someone already doing the target job.
+- Every bullet carries a Y. At Faithful it must come from the profile; if an achievement has none, use its concrete scale (who and how many) and tell the user which lines would be stronger with a number, so they can add it to the profile (guide: refine). At Polished and above, the level's rules say how far numbers may go.
 - One tight line of about 15–25 words per bullet. Drop tool lists, internal names and detail this job doesn't care about.
 - Combine related achievements into one bullet, or split a dense one, citing every source id.
 - Use the job's vocabulary for the same thing, but write plainly: concrete nouns, numbers and outcomes, not adjectives. No filler like "spearheaded", "leveraged", "synergy", "results-driven", "passionate", "cutting-edge", "best-in-class", "dynamic" or "innovative", and no stacking several job keywords into one line.
@@ -148,7 +161,8 @@ After save_cv, fix everything it flags before showing the user (guide: tuning), 
 One page is a hard limit. Every result says how full the page is ("room for about N more lines", or full). When it's full, every line you add needs a line cut. If a save or edit is refused for running over, cut at least the lines it names (the least relevant bullets first, then older roles, never the lines that cover must-haves) and try again.
 
 Fixing what the checks flag (save_cv and edit_cv return these; fix them before showing the user):
-- underpowered: the line is too timid for the chosen level. Rewrite it to the level's requirement: add the figure, widen the scope, state the business outcome or the leadership. Don't just swap in a stronger verb.
+- underpowered: the line is too timid for the chosen level. Rewrite it to the level's requirement in the XYZ format: add the figure, widen the scope, state the business outcome or the leadership. Don't just swap in a stronger verb.
+- A line with no number (at any level): rebuild it as X, Y, Z. If the profile has no figure for it and the level doesn't allow one, ask the user for it and add it to the profile first.
 - uncoveredMustHaves (Bold only): add a line for each must-have the user's work touches, grown from their closest real work; ask the user about any it doesn't.
 - copiedFromProfile: the line still reads like the profile. Reframe it for this job: outcome first, the job's words, a different structure. Combining it with a related achievement often helps.
 - buzzwords: say it plainly, with a concrete noun or number in place of the filler word.
@@ -158,7 +172,7 @@ Fixing what the checks flag (save_cv and edit_cv return these; fix them before s
 - missingMustHaves and keyword coverage: work missing terms into a relevant existing line in the job's spelling, one term per line, or into the skills list. Never stack them.
 
 Common requests:
-- "Stronger", "punchier", "undersells me": raise the lines they mean within the level (outcome first, the figure, the scope). If they're at the level's ceiling, offer the next level up.
+- "Stronger", "punchier", "undersells me", "more numbers": rebuild the lines they mean in XYZ within the level (result first, the figure, then how). If the profile lacks the figures, ask for them. If they're at the level's ceiling, offer the next level up.
 - "I can't defend this", "too much": tone those lines down and rate them lower, or offer a lower level for the whole CV.
 - "Shorter": remove the least relevant bullets first, then whole older roles. Keep the lines that cover must-haves.
 - "Add X" when the page is full: say what you'd cut to make room, cut it in the same edit, and tell the user.

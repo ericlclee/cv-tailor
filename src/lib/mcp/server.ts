@@ -9,6 +9,7 @@ import { applyEdits, prepareEdits } from "../cv-edits";
 import { get, getMaster, getProfile, getSkills, newId, put, remove, setProfile, setSkills, type Master } from "../db";
 import { entryKind, extractMetrics, toAchievement, toEntry } from "../entries";
 import { pageFit, type PageFit } from "../export";
+import { hasNumber } from "../format";
 import { fetchJob } from "../jobs";
 import { containsTerm, cvPlainText, keywordReport, normalize } from "../keywords";
 import { analyzeRequirements, backedCount, requirementKey } from "../requirements";
@@ -34,12 +35,12 @@ const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence ban
 The full instructions for each stage are in guides. Before starting a stage, call get_guide with its topic (once per chat; several topics in one call is fine) and follow it:
 ${GUIDE_TOPICS.map((t) => `- ${t}: ${GUIDES[t].use}`).join("\n")}
 
-The master profile comes first: every CV can only be as strong as the detail on record. Set it up from the user's CV, then keep refining it: press for the full story behind each achievement (context, their part, scale, results, recognition), one achievement at a time, and don't settle for vague answers. Hold off saving until the story is complete or the user asks you to update it; then record it worded as strongly and confidently as the facts allow. When the user mentions something new about their work in passing, ask about it the same way.
+The master profile comes first: every CV can only be as strong as the detail on record. Set it up from the user's CV, then keep refining it: press for the full story behind each achievement in the XYZ format ("Accomplished X, as measured by Y, by doing Z"), one achievement at a time, and don't settle for vague answers or an achievement without a number. Hold off saving until the story is complete or the user asks you to update it; then record it worded as strongly and confidently as the facts allow. When the user mentions something new about their work in passing, ask about it the same way.
 
 Workflow: get_overview; set up and refine the profile; when the user shares a job, create_application and curate the listing once; close the must-have gaps; agree the ambition level; write the CV with save_cv; tune it with edit_cv; track progress with update_application.
 
 Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly.
-Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet cites the achievement ids it is based on. A CV is one page at most (enforced). Never copy the profile's wording into a CV: rewrite it for the job.
+Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet is built in the XYZ format too, and cites the achievement ids it is based on. A CV is one page at most (enforced). Never copy the profile's wording into a CV: rewrite it for the job.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
 
@@ -421,12 +422,16 @@ export function createMcpServer() {
       if (!details.length) return fail(`Nothing changed. ${problems.join("; ")}`);
       await t.record({ kind: "profile", summary: input.summary, details });
       const after = await getMaster();
+      // An achievement isn't finished without its Y: the number that proves it.
+      const written = [...(input.addAchievements ?? []).map((a) => a.text), ...(input.updateAchievements ?? []).flatMap((a) => (a.text ? [a.text] : [])), ...(input.addEntries ?? []).flatMap((e) => (e.achievements ?? []).map((a) => a.text))];
+      const noNumber = written.filter((t) => !hasNumber(t));
       return json({
         saved: true,
         changes: details.length,
         problems,
         strength: `${profileStrength(after)}/100`,
-        nextStep: "Move on to the next achievement and gather its full story (context, their part, scale, result, recognition) before saving it (get_guide 'refine').",
+        ...(noNumber.length ? { noNumber, needsY: `${noNumber.length} achievement${noNumber.length === 1 ? " has" : "s have"} no number yet. In the XYZ format, Y (the number that proves the result) is what makes an achievement convincing: ask for it (time, money, volume, quality or reach; an estimate is fine) before moving on.` } : {}),
+        nextStep: "Move on to the next achievement and gather its full story in the XYZ format (result, the number that proves it, what they did, with context and scale) before saving it (get_guide 'refine').",
         nextQuestions: (await refreshSuggestions()).slice(0, 3).map((s) => s.question),
         seeIt: appUrl(),
       });

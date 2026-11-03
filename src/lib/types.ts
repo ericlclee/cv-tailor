@@ -184,8 +184,28 @@ export interface CvDraft {
   notes: string[];
   /** The application's ambition level when this CV was written. */
   ambition?: Ambition;
+  /** The number of its latest version (see CvVersion). Missing on CVs from before versions. */
+  version?: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * A saved state of a CV. Every change (from the chat or this app) adds one, so the user
+ * can go back to any point instead of undoing. Stored in the "versions" collection.
+ */
+export interface CvVersion {
+  id: string;
+  cvId: string;
+  /** 1, 2, 3… per CV. */
+  n: number;
+  at: string;
+  source: "chat" | "web";
+  summary: string;
+  content: CvContent;
+  ambition?: Ambition;
+  /** Set when this version brought back an earlier one. */
+  restoredFrom?: number;
 }
 
 export type SuggestionKind = "missing-metric" | "thin-entry" | "missing-section" | "skill-evidence" | "job-gap" | "interview";
@@ -247,6 +267,8 @@ export interface Activity {
   /** The application it belongs to, or null for the master profile. */
   appId: string | null;
   status: "applied" | "undone";
+  /** The CV version this change made. CV changes are revisited by version, not undone. */
+  cvVersion?: number;
   /** The state of everything this change touched, before it ran. Restored on undo. */
   snapshots: Snapshot[];
 }

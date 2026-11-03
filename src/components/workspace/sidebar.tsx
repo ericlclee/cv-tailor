@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/client/api";
-import { useRefresh } from "@/lib/client/bus";
+import { goToVersion, useRefresh, useViewing, type Viewing } from "@/lib/client/bus";
 import { TRACK, type AppStatus } from "@/lib/types";
 import { cx } from "../ui";
 import { Logo } from "./logo";
@@ -18,6 +18,7 @@ interface AppRow {
   closed: boolean;
   statusLabel: string;
   dateLabelAt: string;
+  cvVersion: number | null;
 }
 interface SidebarData {
   profile: { name: string; strength: number; started: boolean };
@@ -47,6 +48,9 @@ export function Sidebar() {
   }, []);
   useEffect(load, [load, path]);
   useRefresh(load);
+  // Which CV version the open application is showing, if not the latest.
+  const [viewing, setViewing] = useState<Viewing | null>(null);
+  useViewing(setViewing);
 
   const active = data?.apps.filter((a) => !a.closed) ?? [];
   const closed = data?.apps.filter((a) => a.closed) ?? [];
@@ -87,8 +91,8 @@ export function Sidebar() {
         New application
       </Link>
 
-      <AppGroup label="Active" apps={active} path={path} empty={data ? "None yet. Paste a job link into the chat and it'll appear here, so you can follow it from draft to offer." : ""} />
-      {closed.length > 0 && <AppGroup label="Closed" apps={closed} path={path} />}
+      <AppGroup label="Active" apps={active} path={path} viewing={viewing} empty={data ? "None yet. Paste a job link into the chat and it'll appear here, so you can follow it from draft to offer." : ""} />
+      {closed.length > 0 && <AppGroup label="Closed" apps={closed} path={path} viewing={viewing} />}
 
       <span className="flex-1" />
       <Account path={path} fallbackName={data?.profile.name ?? ""} onSignOut={() => router.replace("/login")} />
@@ -151,7 +155,7 @@ function Account({ path, fallbackName, onSignOut }: { path: string; fallbackName
   );
 }
 
-function AppGroup({ label, apps, path, empty }: { label: string; apps: AppRow[]; path: string; empty?: string }) {
+function AppGroup({ label, apps, path, viewing, empty }: { label: string; apps: AppRow[]; path: string; viewing: Viewing | null; empty?: string }) {
   return (
     <div className="flex flex-col gap-0.5">
       <p className="mb-1 px-3 font-mono text-[11px] tracking-[0.08em] text-faint uppercase">{label}</p>
@@ -159,12 +163,13 @@ function AppGroup({ label, apps, path, empty }: { label: string; apps: AppRow[];
       {apps.map((a) => {
         const current = path.startsWith(`/apps/${a.id}`);
         const reached = TRACK.findIndex((t) => t.status === a.reached);
+        const older = current && viewing?.appId === a.id ? viewing.n : null;
         return (
+          <div key={a.id} className={cx("flex flex-col rounded-[10px]", current && "bg-[#e4e7ec]")}>
           <Link
-            key={a.id}
             href={`/apps/${a.id}`}
             aria-current={current ? "page" : undefined}
-            className={cx("flex flex-col gap-0.5 rounded-[10px] px-3 py-2.5", current ? "bg-[#e4e7ec]" : "hover:bg-black/[0.04]", a.closed && !current && "opacity-75")}
+            className={cx("flex flex-col gap-0.5 rounded-[10px] px-3 py-2.5", !current && "hover:bg-black/[0.04]", a.closed && !current && "opacity-75")}
           >
             <span className="text-[15px] leading-snug font-semibold">{a.title}</span>
             {a.company && <span className="text-[13px] text-muted">{a.company}</span>}
@@ -179,6 +184,22 @@ function AppGroup({ label, apps, path, empty }: { label: string; apps: AppRow[];
               </span>
             </span>
           </Link>
+          {current && a.cvVersion && (
+            // The CV version on screen; from an older one, it takes you back to the latest.
+            <button
+              type="button"
+              onClick={() => goToVersion(a.cvVersion)}
+              className={cx("mx-2.5 mb-2.5 flex h-8 items-center gap-2 rounded-lg border bg-surface px-2 text-left text-[12.5px] hover:border-muted", older ? "border-accent" : "border-control")}
+            >
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 15 15" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="7.5" cy="7.5" r="5.5" />
+                <path d="M7.5 4.5v3l2 1.5" />
+              </svg>
+              <span className="font-mono font-medium">v{older ?? a.cvVersion}</span>
+              <span className="min-w-0 flex-1 truncate text-muted">{older ? "Viewing an older version · back to latest" : "Latest CV"}</span>
+            </button>
+          )}
+          </div>
         );
       })}
     </div>

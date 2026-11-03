@@ -5,7 +5,7 @@ Keep a record of your whole career, tailor a standout, ATS-friendly CV for every
 CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
 
 - **Your chat app** (Claude Desktop, Claude Code, claude.ai, ChatGPT…) does the thinking and writing, on your own plan. No AI API key needed.
-- **CV Tailor** stores your profile and applications, reads job links, flags CV lines you'll need to back up in an interview, and shows everything live in the browser. There you can edit, undo, and download PDF or DOCX.
+- **CV Tailor** stores your profile and applications, reads job links, flags CV lines you'll need to back up in an interview, and shows everything live in the browser. There you can edit, go back to any earlier version of a CV, and download PDF or DOCX.
 
 ![The CV view: a tailored CV in the middle, applications on the left, and the activity feed of changes made from the chat on the right](docs/cv.png)
 
@@ -19,9 +19,11 @@ CV Tailor is an [MCP](https://modelcontextprotocol.io) server plus a web app:
   - numbers and bullets that go beyond your profile are flagged, so you can prepare to back them up in an interview;
   - skills your profile doesn't show are kept, and listed for you to prepare;
   - requirements you said you lack are never claimed.
+- **ATS score.** Each CV gets an estimate of how an applicant tracking system would match it to the listing: job keywords (most of the score, must-haves counting double), the job title, standard sections, contact details and length, with what's missing.
 - **ATS-friendly export.** A single-column layout with standard headings and real text, as PDF or DOCX.
 - **Application tracking.** A stage for each job (Saved → CV → Applied → Interview → Offer), with a dated timeline and notes, kept up to date from your chat.
-- **Live activity feed with undo.** Every change your chat makes appears in the browser within seconds and can be undone.
+- **Live activity feed, with CV versions.** Every change your chat makes appears in the browser within seconds. Profile changes can be undone; every CV change is a numbered version you can look at again and restore, so nothing is lost.
+- **Prompts for the lines you pick.** The app can't message your chat, so its actions are prompts to copy: pick lines in the CV and the activity panel suggests prompts that quote them (tone down, add a figure, work in a missing keyword).
 
 ![The match view: each job requirement with the evidence behind it](docs/match.png)
 
@@ -32,7 +34,7 @@ Your chat app ──MCP──▶ /mcp (10 tools) ──▶ database ◀── we
 ```
 
 1. You talk to your chat as usual. It calls CV Tailor's tools to read your profile and jobs, and to save changes.
-2. CV Tailor checks and stores everything, and records each change with what it replaced, so it can be undone.
+2. CV Tailor checks and stores everything, and records each change with what it replaced, so it can be undone (or, for a CV, gone back to as a version).
 3. The web app shows it all live, and is where you review, edit and download.
 
 **Built with** Next.js 16, TypeScript, Tailwind CSS 4, the MCP TypeScript SDK, and Postgres/Supabase or SQLite. PDFs are made with pdfkit and Word files with docx.
@@ -123,7 +125,7 @@ Ask your chat things like:
 - "Draft my CV for that job." / "Make it shorter." / "Sound more senior."
 - "I applied today." / "Interview on Tuesday at 2pm. Help me prepare."
 
-Every change shows up in the web app's **Activity** panel with **Undo**. Undo is refused if a later change touched the same data, so undo the newer one first.
+Every change shows up in the web app's **Activity** panel. Profile and application changes have **Undo**, which is refused if a later change touched the same data, so undo the newer one first. CV changes are versions instead: **Go to vN** shows the CV as it was, and **Restore** makes it the latest again as a new version.
 
 ## Tools
 
@@ -162,6 +164,8 @@ src/lib/mcp/server.ts   MCP tools and the short instructions sent to your chat
 src/lib/mcp/guide.ts    The guides get_guide returns: the full instructions for each stage
 src/app/mcp/route.ts    Streamable HTTP endpoint (stateless); runs each request as the key's user
 src/lib/activity.ts     Change log with snapshot-based undo
+src/lib/versions.ts     Numbered CV versions: save, view, restore
+src/lib/ats.ts          ATS score estimate
 src/lib/tailor.ts       Turns a CV plan into CV content and checks it against the evidence
 src/lib/requirements.ts Links each job requirement to the achievements that prove it
 src/lib/applications.ts Status, timeline and notes

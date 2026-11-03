@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { api } from "@/lib/client/api";
 import { emitRefresh, useRefresh } from "@/lib/client/bus";
 import type { Activity } from "@/lib/types";
 import { toast, toastError } from "../toast";
 import { cx } from "../ui";
 
-// The right-hand panel: what your chat (or this app) changed, live, with Undo.
+// The right-hand panel: what your chat (or this app) changed, live. Profile and
+// application changes can be undone; each CV change is a version you can go back to.
 // The conversation itself happens in your own chat app over MCP.
 
 type Item = Omit<Activity, "snapshots">;
@@ -37,7 +38,17 @@ export async function copyText(text: string, what = "Copied") {
   }
 }
 
-export function ActivityPanel({ scope, context, prompts }: { scope: string | null; context: string; prompts: string[] }) {
+/** An application's CV versions, for going back to one from its change in the feed. */
+export interface VersionNav {
+  latest: number;
+  /** The version being looked at, when it isn't the latest. */
+  viewing: number | null;
+  /** The version sent with the application. */
+  sent: number | null;
+  onGo: (n: number) => void;
+}
+
+export function ActivityPanel({ scope, context, prompts, versions, footer }: { scope: string | null; context: string; prompts: string[]; versions?: VersionNav; footer?: ReactNode }) {
   const [items, setItems] = useState<Item[] | null>(null);
   const [everything, setEverything] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
@@ -98,20 +109,28 @@ export function ActivityPanel({ scope, context, prompts }: { scope: string | nul
         {items === null && <p className="text-sm text-muted">Loading…</p>}
         {empty && <ConnectGuide prompts={prompts} />}
         {items?.map((a) => (
-          <article key={a.id} className={cx("rounded-xl border border-line px-4 py-3", a.status === "undone" && "opacity-55")}>
+          <article key={a.id} className={cx("rounded-xl border px-4 py-3", a.cvVersion && a.cvVersion === versions?.viewing ? "border-accent bg-[#f2f4ff]" : "border-line", a.status === "undone" && "opacity-55")}>
             <div className="flex items-start gap-2.5">
               <span aria-hidden="true" className={cx("mt-1.5 size-2.5 shrink-0 rounded-full", KIND_DOT[a.kind])} />
               <div className="min-w-0 flex-1">
                 <p className={cx("text-[15px] leading-snug font-medium", a.status === "undone" && "line-through")}>{a.summary}</p>
                 <p className="mt-0.5 text-xs text-muted">
+                  {a.cvVersion && <span className="font-mono text-ink">v{a.cvVersion} · </span>}
                   {a.source === "chat" ? "From your chat" : "In this app"} · {when(a.at)}
                   {a.status === "undone" && " · undone"}
                 </p>
+                {a.cvVersion && versions && a.appId === scope && a.cvVersion === versions.sent && (
+                  <span className="mt-1.5 inline-block rounded-full bg-warn-soft px-2 py-px text-[11.5px] font-semibold text-warn-ink">Sent with your application</span>
+                )}
               </div>
-              {a.status === "applied" && (
-                <button type="button" onClick={() => undo(a.id)} className="min-h-8 shrink-0 px-1 text-sm font-medium text-accent">
-                  Undo
-                </button>
+              {a.cvVersion ? (
+                versions && a.appId === scope && <VersionControl n={a.cvVersion} nav={versions} />
+              ) : (
+                a.status === "applied" && (
+                  <button type="button" onClick={() => undo(a.id)} className="min-h-8 shrink-0 px-1 text-sm font-medium text-accent">
+                    Undo
+                  </button>
+                )
               )}
             </div>
             {a.details.length > 0 && (
@@ -135,7 +154,8 @@ export function ActivityPanel({ scope, context, prompts }: { scope: string | nul
       </div>
 
       <div className="border-t border-line-soft px-5 pt-3 pb-4 lg:max-h-[55%] lg:shrink-0 lg:overflow-y-auto">
-        {!empty && prompts.length > 0 && (
+        {!empty && footer && <div className="mb-3">{footer}</div>}
+        {!empty && !footer && prompts.length > 0 && (
           <div className="mb-3 flex flex-col gap-1.5">
             <p className="text-xs font-medium text-muted">Try asking your chat</p>
             {prompts.map((p) => (
@@ -157,6 +177,18 @@ export function ActivityPanel({ scope, context, prompts }: { scope: string | nul
         )}
       </div>
     </section>
+  );
+}
+
+/** Where a CV change's version stands: the latest, the one on screen, or one to go to. */
+function VersionControl({ n, nav }: { n: number; nav: VersionNav }) {
+  const shown = nav.viewing ?? nav.latest;
+  if (n === shown)
+    return <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[11.5px] font-semibold text-white", nav.viewing ? "bg-accent" : "bg-ink")}>{nav.viewing ? "Viewing" : "Latest"}</span>;
+  return (
+    <button type="button" onClick={() => nav.onGo(n)} className="min-h-8 shrink-0 rounded-lg border border-control px-2.5 text-[12.5px] font-semibold whitespace-nowrap hover:border-muted">
+      {n === nav.latest ? "Back to latest" : `Go to v${n}`}
+    </button>
   );
 }
 

@@ -70,7 +70,9 @@ export function changeStatus(job: Job, to: AppStatus, detail = "", at = now()) {
 }
 
 export async function listApplications() {
-  return (await list("jobs"))
+  const [jobs, cvs] = await Promise.all([list("jobs"), list("cvs")]);
+  const versions = new Map(cvs.map((c) => [c.id, c.version ?? 1]));
+  return jobs
     .filter((j) => j.parsed)
     .map((j) => {
       const events = j.events ?? [];
@@ -87,6 +89,7 @@ export async function listApplications() {
         dateLabelAt: upcoming?.at ?? events.at(-1)?.at ?? j.createdAt,
         updatedAt: j.updatedAt ?? j.createdAt,
         curated: Boolean(j.curatedAt),
+        cvVersion: (j.cvId && versions.get(j.cvId)) || null,
       };
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

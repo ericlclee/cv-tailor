@@ -5,7 +5,7 @@ import { attachDatabasePool } from "@vercel/functions";
 import { customAlphabet } from "nanoid";
 import pg from "pg";
 import { LOCAL_USER_ID, sessionUser, SignInRequired } from "./session";
-import type { Activity, Approval, CvDraft, Entry, Job, Profile, Skill, Suggestion, User } from "./types";
+import type { Activity, Approval, CvDraft, CvVersion, Entry, Job, Profile, Skill, Suggestion, User } from "./types";
 
 // A small document store. Each collection is a table of JSON documents, which
 // keeps the schema flexible while the product changes. Every document and setting
@@ -18,7 +18,7 @@ import type { Activity, Approval, CvDraft, Entry, Job, Profile, Skill, Suggestio
 //   "cv_tailor" schema, which Supabase doesn't expose through its public API.
 // - Otherwise a local SQLite file, DATABASE_PATH or ./data/cv-tailor.db.
 
-const COLLECTIONS = ["entries", "jobs", "cvs", "suggestions", "activity"] as const;
+const COLLECTIONS = ["entries", "jobs", "cvs", "suggestions", "activity", "versions"] as const;
 export type Collection = (typeof COLLECTIONS)[number];
 const GLOBALS = ["users", "invites"] as const;
 type Global = (typeof GLOBALS)[number];
@@ -31,7 +31,9 @@ type DocFor<C extends Collection> = C extends "entries"
       ? CvDraft
       : C extends "suggestions"
         ? Suggestion
-        : Activity;
+        : C extends "versions"
+          ? CvVersion
+          : Activity;
 
 export const newId = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 12);
 
@@ -156,6 +158,21 @@ async function postgresStore(url: string): Promise<Store> {
     // Data from before users existed belongs to the local user until the owner claims it.
     await s.claimUnowned(LOCAL_USER_ID);
     await query("CREATE TABLE IF NOT EXISTS cv_tailor.users (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now())");
+  } else {
+    // Collections added after a database was set up (e.g. "versions") get their table here.
+    const missing = (await query("SELECT c FROM unnest($1::text[]) AS c WHERE to_regclass('cv_tailor.' || c) IS NULL", [[...COLLECTIONS]])).map((r) => r.c as Collection);
+    for (const c of missing) {
+      for (const stmt of [
+        `CREATE TABLE IF NOT EXISTS cv_tailor.${c} (id text PRIMARY KEY, data jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), user_id text)`,
+        `CREATE INDEX IF NOT EXISTS ${c}_user_idx ON cv_tailor.${c} (user_id)`,
+      ]) {
+        try {
+          await query(stmt);
+        } catch (err) {
+          if (!["42P07", "23505"].includes((err as { code?: string }).code ?? "")) throw err;
+        }
+      }
+    }
   }
   return s;
 }

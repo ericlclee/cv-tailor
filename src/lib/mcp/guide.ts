@@ -17,7 +17,7 @@ export const GUIDES: Record<GuideTopic, { title: string; use: string; body: stri
   start: {
     title: "How CV Tailor works",
     use: "the stages in order, and how to explain CV Tailor to the user",
-    body: `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The web app (its link is in get_overview) shows every change you make live, with an Undo button, highlights each CV line by its ambition, and downloads the CV as PDF or Word.
+    body: `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The web app (its link is in get_overview) shows every change you make live (each CV change as a version the user can go back to), highlights each CV line by its ambition, and downloads the CV as PDF or Word.
 
 The stages, with the guide for each:
 1. Call get_overview. If the profile is empty, set it up from the user's CV. Guide: profile.

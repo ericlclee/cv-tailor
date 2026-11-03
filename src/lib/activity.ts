@@ -25,7 +25,7 @@ export function tracker() {
       seen.add(k);
       snapshots.push({ kv: name, value: await kvGet(name, null) });
     },
-    record(a: { source?: Activity["source"]; kind: Activity["kind"]; summary: string; details?: ActivityDetail[]; appId?: string | null }): Promise<Activity> {
+    record(a: { source?: Activity["source"]; kind: Activity["kind"]; summary: string; details?: ActivityDetail[]; appId?: string | null; cvVersion?: number }): Promise<Activity> {
       return put("activity", {
         id: newId(),
         at: new Date().toISOString(),
@@ -35,6 +35,7 @@ export function tracker() {
         details: a.details ?? [],
         appId: a.appId ?? null,
         status: "applied",
+        ...(a.cvVersion ? { cvVersion: a.cvVersion } : {}),
         snapshots,
       });
     },
@@ -55,6 +56,7 @@ export async function undoActivity(id: string) {
   const a = await get("activity", id);
   if (!a) throw new HttpError(404, "Change not found");
   if (a.status === "undone") return a;
+  if (a.cvVersion) throw new HttpError(409, `CV changes aren't undone: go back to an earlier version instead.`);
   const keys = new Set(a.snapshots.map(key));
   const later = (await list("activity")).find((x) => x.status === "applied" && x.at > a.at && x.snapshots.some((s) => keys.has(key(s))));
   if (later) throw new HttpError(409, `A later change ("${later.summary}") touched the same data. Undo that first.`);

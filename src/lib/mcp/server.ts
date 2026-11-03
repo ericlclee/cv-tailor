@@ -17,11 +17,14 @@ import { renderCv } from "../render";
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
 import type { ActivityDetail, AppStatus, CvBullet, CvContent, Entry, ParsedJob } from "../types";
+import { saveCv } from "../versions";
+import { atsReport } from "../ats";
 import { CURATE, GUIDE_TOPICS, GUIDES, guideText } from "./guide";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
 // writing; these tools read and change the data, check CVs against the
-// evidence, and record every change in the activity feed (with undo).
+// evidence, and record every change in the activity feed (with undo, or for
+// CVs a numbered version the user can go back to).
 
 /** Where the web app lives, for links in tool results: APP_URL, else Vercel's production address, else localhost. */
 export const appUrl = () => {
@@ -30,7 +33,7 @@ export const appUrl = () => {
 };
 
 // Kept short: the detail for each stage is in the guides (get_guide), loaded when the chat reaches it.
-const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there with an Undo button.
+const INSTRUCTIONS = `CV Tailor keeps the user's master profile (an evidence bank of roles, projects, education and individual achievements) and their job applications, and turns them into persuasive, ATS-friendly CVs that win interviews. The user watches everything live in the CV Tailor web app (${appUrl()}): every change you make appears there; profile changes can be undone, and every CV change is saved as a version the user can go back to.
 
 The full instructions for each stage are in guides. Before starting a stage, call get_guide with its topic (once per chat; several topics in one call is fine) and follow it:
 ${GUIDE_TOPICS.map((t) => `- ${t}: ${GUIDES[t].use}`).join("\n")}
@@ -616,7 +619,7 @@ export function createMcpServer() {
     "save_cv",
     {
       title: "Save tailored CV",
-      description: `Save the CV you wrote for an application (replaces any previous version; undo restores it). Read get_guide 'ambition' and 'writing' first. Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. CVs are limited to one page: a CV that won't fit, even with the layout tightened, is refused, and the result says how much room is left. Typically 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
+      description: `Save the CV you wrote for an application (replaces the current CV; the previous one stays in its version history). Read get_guide 'ambition' and 'writing' first. Write it at the application's ambition level (see get_application) and rate every bullet and the summary 0–3. You choose which entries and achievements to use and rewrite them for the job in your own words (near-copies of the profile are flagged); titles, employers and dates come from the profile automatically. Every bullet must list the achievement ids it is based on. The server flags numbers that aren't in those sources and skills the profile doesn't show (so the user can prepare for them), and warns if a not-claimed requirement appears. CVs are limited to one page: a CV that won't fit, even with the layout tightened, is refused, and the result says how much room is left. Typically 3–5 bullets for the most relevant recent roles, 1–2 for older ones. Entries you leave out are hidden but kept for the user to add back; education is shown by default.`,
       inputSchema: {
         application_id: z.string(),
         headline: z.string().describe("Short professional headline aimed at this job"),
@@ -654,7 +657,11 @@ export function createMcpServer() {
       await t.doc("cvs", cvId);
       await t.doc("jobs", job.id);
       const now = new Date().toISOString();
-      await put("cvs", { id: cvId, jobId: job.id, name: [job.parsed.title, job.parsed.company].filter(Boolean).join(" · ") || "Tailored CV", content, notes: [], ambition: job.ambition, createdAt: existing?.createdAt ?? now, updatedAt: now });
+      const saved = await saveCv(
+        { id: cvId, jobId: job.id, name: [job.parsed.title, job.parsed.company].filter(Boolean).join(" · ") || "Tailored CV", content, notes: [], ambition: job.ambition, createdAt: existing?.createdAt ?? now, updatedAt: now },
+        { source: "chat", summary: existing ? "Rewrote the CV" : "Drafted the CV" },
+        existing,
+      );
       job.cvId = cvId;
       if (job.status === "saved") changeStatus(job, "cv", "Written in your chat and checked against your evidence.");
       await saveJob(job);
@@ -670,11 +677,14 @@ export function createMcpServer() {
         summary: existing ? "Rewrote the CV" : "Drafted the CV",
         appId: job.id,
         details: [{ label: "CV", after: `${bullets} bullets at ${ambition.chosen} · ${report.matched.length} of ${report.matched.length + report.missing.length} job keywords${warnings.length ? ` · ${warnings.length} to check` : ""}` }],
+        cvVersion: saved.version,
       });
       return json({
         saved: true,
+        version: saved.version,
         bullets,
         keywordCoverage: `${report.score}%`,
+        atsScore: atsReport(content, job.parsed, fit).score,
         page: pageNote(fit),
         missingMustHaves: report.mustHaveMissing,
         ambition,
@@ -745,17 +755,17 @@ export function createMcpServer() {
       }
       const fit = pageFit(renderCv(content));
       if (!fit.fits) return fail(overPage(fit, "changed"));
-      await put("cvs", { ...cv, content, updatedAt: new Date().toISOString() });
+      const saved = await saveCv({ ...cv, content, updatedAt: new Date().toISOString() }, { source: "chat", summary: i.summary_of_change }, cv);
 
       const details: ActivityDetail[] = edits.map((e) => ({ label: e.op === "add" ? "Added line" : e.op === "remove" ? "Removed line" : "Rewrote line", before: e.previous, after: e.op === "remove" ? undefined : e.text }));
       if (i.summary !== undefined) details.push({ label: "Summary", before: cv.content.summary, after: i.summary });
       if (i.headline !== undefined) details.push({ label: "Headline", before: cv.content.header.headline, after: i.headline });
-      await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details });
+      await t.record({ kind: "cv", summary: i.summary_of_change, appId: job.id, details, cvVersion: saved.version });
       const copied = nearCopies(content, m);
       const filler = buzzwords(content);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
       const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler", ambition.aboveChosenLevel && "tone down lines beyond the allowed stretch"].filter(Boolean);
-      return json({ saved: true, applied: details.length, page: pageNote(fit), ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
+      return json({ saved: true, version: saved.version, applied: details.length, atsScore: atsReport(content, job.parsed, fit).score, page: pageNote(fit), ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );
 

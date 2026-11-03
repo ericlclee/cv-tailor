@@ -1,95 +1,60 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AMBITION, ambitionName, type Ambition, type CvRating } from "@/lib/ambition";
+import type { AtsReport } from "@/lib/ats";
 import { api } from "@/lib/client/api";
-import { emitRefresh, useRefresh } from "@/lib/client/bus";
+import { emitRefresh } from "@/lib/client/bus";
 import { capitalize } from "@/lib/format";
 import type { PageFit } from "@/lib/export";
 import type { Requirement } from "@/lib/requirements";
-import { CLOSED_STATUSES, TRACK, type AppStatus, type CvBullet, type CvDraft, type Job, type KeywordReport } from "@/lib/types";
+import { CLOSED_STATUSES, TRACK, type AppStatus, type CvBullet, type CvContent, type CvDraft, type Job, type KeywordReport } from "@/lib/types";
 import { toast, toastError } from "../toast";
-import { Button, Spinner, Textarea, cx } from "../ui";
+import { Button, Textarea, cx } from "../ui";
 import { copyText } from "./activity-panel";
 import type { AppTab } from "./application-view";
-import { DocBar, DocBody, DocPanel, SectionLabel, Tabs } from "./doc";
+import { DocBody, SectionLabel } from "./doc";
 
 type App = Required<Pick<Job, "events" | "notes" | "unclaimed">> & Job & { parsed: NonNullable<Job["parsed"]>; status: AppStatus; ambition: Ambition };
-interface AppData {
+export interface AppData {
   job: App;
   requirements: Requirement[];
   cv: CvDraft | null;
   report: KeywordReport | null;
+  ats: AtsReport | null;
   rating: CvRating | null;
   page: PageFit | null;
+  versions: { latest: number; sent: number | null } | null;
 }
 
-export function ApplicationDocument({ id, tab, role, onTab }: { id: string; tab: AppTab; role: string; onTab: (tab: AppTab) => void }) {
-  const [data, setData] = useState<AppData | null>(null);
-  const [missing, setMissing] = useState(false);
-  const load = useCallback(() => {
-    api<AppData>(`/api/applications/${id}`)
-      .then(setData)
-      .catch(() => setMissing(true));
-  }, [id]);
-  useEffect(load, [load]);
-  useRefresh(load);
+/** An earlier version being looked at instead of the latest. */
+export interface ViewedVersion {
+  n: number;
+  at: string;
+  summary: string;
+  content: CvContent;
+  rating: CvRating;
+}
 
-  // When the chat finishes reading the listing while you're on Match, move on to the
-  // CV tab, where the next step is choosing the ambition level.
-  // A new title (curating replaces the rough guess) also refreshes the server-rendered
-  // role name used by the prompts and the activity panel.
-  const router = useRouter();
-  const seen = useRef<{ id: string; curated: boolean; title: string } | null>(null);
-  useEffect(() => {
-    if (!data || data.job.id !== id) return;
-    const curated = Boolean(data.job.curatedAt);
-    const title = `${data.job.parsed.title}|${data.job.parsed.company}`;
-    if (seen.current?.id === id) {
-      if (!seen.current.curated && curated && tab === "match") {
-        toast("Your chat has read the listing. Choose the ambition level, then draft your CV.");
-        onTab("cv");
-      }
-      if (seen.current.title !== title) router.refresh();
-    }
-    seen.current = { id, curated, title };
-  }, [data, id, tab, onTab, router]);
+/** The CV tab's shared state: which version is shown, and the lines picked for the chat. */
+export interface CvState {
+  viewed: ViewedVersion | null;
+  selected: string[];
+  onSelect: (lineId: string) => void;
+  editing: string | null;
+  onEdit: (lineId: string | null) => void;
+  onBack: () => void;
+  onRestore: (n: number) => void;
+}
 
-  const title = data ? [data.job.parsed.title, data.job.parsed.company].filter(Boolean).join(" · ") : "Application";
-  return (
-    <DocPanel>
-      <DocBar title={title}>
-        <Tabs
-          base={`/apps/${id}`}
-          active={tab}
-          onSelect={onTab}
-          tabs={[
-            { key: "match", label: "Match" },
-            { key: "cv", label: "CV" },
-            { key: "timeline", label: "Timeline" },
-          ]}
-        />
-      </DocBar>
-      {missing ? (
-        <DocBody>
-          <p className="text-muted">This application doesn&apos;t exist any more.</p>
-        </DocBody>
-      ) : !data ? (
-        <DocBody>
-          <div className="flex items-center gap-2 text-muted">
-            <Spinner /> Loading…
-          </div>
-        </DocBody>
-      ) : tab === "cv" ? (
-        <CvTab data={data} reload={load} update={setData} role={role} />
-      ) : tab === "timeline" ? (
-        <TimelineTab data={data} reload={load} />
-      ) : (
-        <MatchTab data={data} reload={load} role={role} onTab={onTab} />
-      )}
-    </DocPanel>
-  );
+/** The summary's id when it's picked like a line. */
+export const SUMMARY = "summary";
+
+export function ApplicationDocument({ data, tab, role, reload, update, onTab, cvState }: { data: AppData; tab: AppTab; role: string; reload: () => void; update: (d: AppData) => void; onTab: (tab: AppTab) => void; cvState: CvState }) {
+  if (tab === "cv") return <CvTab data={data} reload={reload} update={update} role={role} state={cvState} />;
+  if (tab === "timeline") return <TimelineTab data={data} reload={reload} />;
+  return <MatchTab data={data} reload={reload} role={role} onTab={onTab} />;
 }
 
 async function notClaimed(id: string, name: string, op: "add" | "remove", reload: () => void) {
@@ -102,7 +67,7 @@ async function notClaimed(id: string, name: string, op: "add" | "remove", reload
   }
 }
 
-async function markApplied(id: string, reload: () => void) {
+export async function markApplied(id: string, reload: () => void) {
   try {
     await api(`/api/applications/${id}`, { method: "PATCH", body: { status: "applied" } });
     toast("Marked as applied");
@@ -269,278 +234,316 @@ function JobText({ text }: { text: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// The CV tab: the CV, its legend, the ATS score and export. Every line is highlighted by
+// its ambition; click lines to pick them, and the activity panel offers prompts for them.
 
-function CvTab({ data, reload, update, role }: { data: AppData; reload: () => void; update: (d: AppData) => void; role: string }) {
-  const { cv, job, report } = data;
-  const [editing, setEditing] = useState<string | null>(null);
+const shownBullets = (c: CvContent) => c.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : []));
+
+function CvTab({ data, reload, update, role, state }: { data: AppData; reload: () => void; update: (d: AppData) => void; role: string; state: CvState }) {
+  const { cv } = data;
   const [text, setText] = useState("");
-  const [highlights, setHighlights] = useState(true);
+  const [editingFor, setEditingFor] = useState<string | null>(null);
 
-  if (!cv) {
-    return (
-      <>
-        <AmbitionPicker data={data} update={update} role={role} step={1} />
-        <DocBody>
-          <div className="flex flex-col items-start gap-3 rounded-xl border-[1.5px] border-dashed border-control px-6 py-7">
-            <p className="text-lg font-semibold">2. Ask your chat to draft it</p>
-            <p className="text-[15px] leading-relaxed text-muted">
-              Once you&apos;ve chosen the ambition level above, copy this prompt into your chat. It picks and reframes the achievements from your master profile that fit this job at the {ambitionName(job.ambition)} level, and rates every line it writes so you can see how far each one goes.
-            </p>
-            <Button variant="primary" onClick={() => copyText(draftPrompt(role, job.ambition, false), "Prompt copied")}>
-              Copy prompt for your chat
-            </Button>
-          </div>
-        </DocBody>
-      </>
-    );
+  if (!cv) return <DraftCard data={data} update={update} role={role} />;
+
+  const viewed = state.viewed;
+  const content = viewed?.content ?? cv.content;
+  const rating = viewed?.rating ?? data.rating ?? { bullets: {}, summary: 0 as Ambition, skills: {} };
+  // The edit box starts from the line's text each time a line is opened for editing.
+  const editing = viewed ? null : state.editing;
+  if (editing !== editingFor) {
+    setEditingFor(editing);
+    setText(editing === SUMMARY ? cv.content.summary : (shownBullets(cv.content).find((b) => b.id === editing)?.text ?? ""));
   }
 
-  async function save(mutate: (b: CvBullet) => void, bulletId: string) {
-    const content = structuredClone(cv!.content);
-    for (const s of content.sections) for (const i of s.items) for (const b of i.bullets) if (b.id === bulletId) mutate(b);
+  async function saveContent(next: CvContent) {
     try {
-      await api(`/api/cvs/${cv!.id}`, { method: "PUT", body: { name: cv!.name, content } });
-      setEditing(null);
+      await api(`/api/cvs/${cv!.id}`, { method: "PUT", body: { name: cv!.name, content: next } });
+      state.onEdit(null);
       reload();
+      emitRefresh();
     } catch (e) {
       toastError(e);
     }
   }
-
-  async function saveSummary(summary: string) {
-    try {
-      await api(`/api/cvs/${cv!.id}`, { method: "PUT", body: { name: cv!.name, content: { ...cv!.content, summary, summaryAmbition: undefined } } });
-      setEditing(null);
-      reload();
-    } catch (e) {
-      toastError(e);
-    }
+  function saveBullet(bulletId: string, mutate: (b: CvBullet) => void) {
+    const next = structuredClone(cv!.content);
+    for (const s of next.sections) for (const i of s.items) for (const b of i.bullets) if (b.id === bulletId) mutate(b);
+    return saveContent(next);
   }
 
-  const h = cv.content.header;
+  const h = content.header;
   const contact = [h.email, h.phone, h.location, ...h.links.map((l) => l.url.replace(/^https?:\/\/(www\.)?/, ""))].filter(Boolean);
-  const applied = ["applied", "interview", "offer"].includes(job.status) || CLOSED_STATUSES.includes(job.status);
-  const rating = data.rating ?? { bullets: {}, summary: 0 as Ambition, skills: {} };
-  const shown = cv.content.sections.flatMap((s) => (s.include ? s.items.filter((i) => i.include).flatMap((i) => i.bullets.filter((b) => b.include)) : []));
-  const counts = AMBITION.map((a) => shown.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length);
-  const mark = (level: Ambition) => ({ level, above: highlights && level > job.ambition, on: highlights });
-  const page = data.page;
+  const lines = shownBullets(content);
+  const counts = AMBITION.map((a) => lines.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length + (content.summary && rating.summary === a.level ? 1 : 0));
+  const picked = (id: string) => !viewed && state.selected.includes(id);
 
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-2.5 border-b border-line-soft bg-sidebar px-7 py-3">
-        <span className="text-sm text-ink-2">Edited {new Date(cv.updatedAt).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-        {report && (
-          <span className="text-sm text-muted">
-            · {report.matched.length} of {report.matched.length + report.missing.length} job keywords
-          </span>
-        )}
-        {page && (
-          <span className={cx("text-sm", page.fits ? "text-muted" : "font-medium text-[#b42318]")}>
-            {page.fits ? `· One page${page.tightened ? ", full" : page.spareLines ? `, room for ${page.spareLines} more line${page.spareLines === 1 ? "" : "s"}` : ""}` : `· Over one page by about ${page.overLines} line${page.overLines === 1 ? "" : "s"}: hide some lines to fit`}
-          </span>
-        )}
-        <span className="flex-1" />
-        <a href={`/api/cvs/${cv.id}/export?format=docx`} className="flex min-h-10 items-center rounded-[9px] border border-control bg-surface px-3.5 text-sm font-medium hover:border-muted">
-          DOCX
-        </a>
-        <a href={`/api/cvs/${cv.id}/export?format=pdf`} className="flex min-h-10 items-center rounded-[9px] border border-control bg-surface px-3.5 text-sm font-medium hover:border-muted">
-          PDF
-        </a>
-        {!applied && (
-          <Button variant="primary" onClick={() => markApplied(job.id, reload)}>
-            Mark as applied
-          </Button>
+    <div className="flex min-h-full flex-col items-center bg-[#e4e7ec] px-4 pb-10 sm:px-7">
+      <div className="sticky top-0 z-10 flex w-full justify-center bg-[#e4e7ec] py-3">
+        {viewed ? (
+          <ViewingBanner version={viewed} onBack={state.onBack} onRestore={() => state.onRestore(viewed.n)} />
+        ) : (
+          <CvStrip counts={counts} ats={data.ats} cvId={cv.id} />
         )}
       </div>
-      <AmbitionPicker data={data} update={update} role={role} />
-      <div className="flex flex-col items-center gap-4 bg-[#e4e7ec] px-4 py-7 sm:px-7">
-        <AmbitionLegend counts={counts} chosen={job.ambition} highlights={highlights} onToggle={() => setHighlights(!highlights)} anyAbove={shown.some((b) => (rating.bullets[b.id] ?? 0) > job.ambition) || rating.summary > job.ambition} />
-        <article aria-label="CV" className="cv-page w-full max-w-[720px] bg-white px-7 py-10 text-[13px] shadow-[0_1px_2px_rgba(14,17,22,0.08),0_8px_24px_rgba(14,17,22,0.08)] sm:px-[52px] sm:py-12">
-          <h2 className="text-2xl font-bold tracking-tight">{h.name || "Your name"}</h2>
-          {h.headline && <p className="mt-0.5 text-sm">{h.headline}</p>}
-          {contact.length > 0 && <p className="mt-1 text-xs text-[#333]">{contact.join("  |  ")}</p>}
+      <article aria-label="CV" className="cv-page w-full max-w-[720px] bg-white px-7 py-10 text-[13px] shadow-[0_1px_2px_rgba(14,17,22,0.08),0_8px_24px_rgba(14,17,22,0.08)] sm:px-[52px] sm:py-12">
+        <h2 className="text-2xl font-bold tracking-tight">{h.name || "Your name"}</h2>
+        {h.headline && <p className="mt-0.5 text-sm">{h.headline}</p>}
+        {contact.length > 0 && <p className="mt-1 text-xs text-[#333]">{contact.join("  |  ")}</p>}
 
-          <CvHeading>Summary</CvHeading>
-          {editing === "summary" ? (
-            <InlineEdit value={text} onChange={setText} onCancel={() => setEditing(null)} onSave={() => saveSummary(text)} />
-          ) : (
-            <button type="button" className="w-full rounded-sm text-left hover:bg-accent-soft" onClick={() => (setText(cv.content.summary), setEditing("summary"))}>
-              {cv.content.summary ? <Rated {...mark(rating.summary)}>{cv.content.summary}</Rated> : <span className="text-faint">Add a summary</span>}
-            </button>
-          )}
+        <CvHeading>Summary</CvHeading>
+        {editing === SUMMARY ? (
+          <InlineEdit value={text} onChange={setText} onCancel={() => state.onEdit(null)} onSave={() => saveContent({ ...cv.content, summary: text, summaryAmbition: undefined })} />
+        ) : content.summary ? (
+          <Line level={rating.summary} picked={picked(SUMMARY)} disabled={!!viewed} onPick={() => state.onSelect(SUMMARY)}>
+            {content.summary}
+          </Line>
+        ) : (
+          <p className="text-faint">No summary</p>
+        )}
 
-          {cv.content.skills.length > 0 && (
-            <>
-              <CvHeading>Skills</CvHeading>
-              {cv.content.skills.map((g, i) => (
-                <p key={i} className="mb-0.5">
-                  {g.category && <strong>{g.category}: </strong>}
-                  {g.items.map((item, k) => (
-                    <span key={item}>
-                      {k > 0 && ", "}
-                      <Rated {...mark(rating.skills[item] ?? 0)}>{item}</Rated>
-                    </span>
-                  ))}
-                </p>
-              ))}
-            </>
-          )}
-
-          {cv.content.sections
-            .filter((s) => s.include && s.items.some((i) => i.include))
-            .map((s) => (
-              <div key={s.id}>
-                <CvHeading>{s.title}</CvHeading>
-                {s.items
-                  .filter((i) => i.include)
-                  .map((it) => (
-                    <div key={it.id} className="mb-2.5">
-                      <div className="flex justify-between gap-4">
-                        <p>
-                          <strong>{it.title}</strong>
-                          {it.organization && `, ${it.organization}`}
-                        </p>
-                        <p className="shrink-0">{it.dates}</p>
-                      </div>
-                      <ul className="mt-0.5 flex flex-col gap-px">
-                        {it.bullets
-                          .filter((b) => b.include)
-                          .map((b) => (
-                            <li key={b.id} className="flex gap-2 pl-1">
-                              <span aria-hidden="true">•</span>
-                              {editing === b.id ? (
-                                <InlineEdit
-                                  value={text}
-                                  onChange={setText}
-                                  onCancel={() => setEditing(null)}
-                                  onSave={() => save((x) => ((x.text = text), (x.warning = undefined), (x.ambition = undefined)), b.id)}
-                                  onRemove={() => save((x) => (x.include = false), b.id)}
-                                />
-                              ) : (
-                                <button
-                                  type="button"
-                                  title={[lineTitle(rating.bullets[b.id] ?? 0, job.ambition), b.warning, "Click to edit"].filter(Boolean).join("\n")}
-                                  onClick={() => (setText(b.text), setEditing(b.id))}
-                                  className={cx("flex-1 rounded-sm text-left hover:bg-accent-soft", !highlights && b.warning && "underline decoration-warn decoration-wavy underline-offset-[3px]")}
-                                >
-                                  <Rated {...mark(rating.bullets[b.id] ?? 0)}>{b.text}</Rated>
-                                </button>
-                              )}
-                            </li>
-                          ))}
-                      </ul>
-                    </div>
-                  ))}
-              </div>
+        {content.skills.length > 0 && (
+          <>
+            <CvHeading>Skills</CvHeading>
+            {content.skills.map((g, i) => (
+              <p key={i} className="mb-0.5">
+                {g.category && <strong>{g.category}: </strong>}
+                {g.items.map((item, k) => (
+                  <span key={item}>
+                    {k > 0 && ", "}
+                    <Rated level={rating.skills[item] ?? 0}>{item}</Rated>
+                  </span>
+                ))}
+              </p>
             ))}
-        </article>
-      </div>
-      <p className="px-7 pb-6 text-center text-[13px] text-muted">Click any line to edit it, or ask your chat for changes like “make it shorter” or “tone down the Bold lines”. Highlights are never included in the PDF or DOCX.</p>
-    </>
+          </>
+        )}
+
+        {content.sections
+          .filter((s) => s.include && s.items.some((i) => i.include))
+          .map((s) => (
+            <div key={s.id}>
+              <CvHeading>{s.title}</CvHeading>
+              {s.items
+                .filter((i) => i.include)
+                .map((it) => (
+                  <div key={it.id} className="mb-2.5">
+                    <div className="flex justify-between gap-4">
+                      <p>
+                        <strong>{it.title}</strong>
+                        {it.organization && `, ${it.organization}`}
+                      </p>
+                      <p className="shrink-0">{it.dates}</p>
+                    </div>
+                    <ul className="mt-0.5 flex flex-col gap-px">
+                      {it.bullets
+                        .filter((b) => b.include)
+                        .map((b) => (
+                          <li key={b.id} className="flex gap-2 pl-1">
+                            <span aria-hidden="true">•</span>
+                            {editing === b.id ? (
+                              <InlineEdit
+                                value={text}
+                                onChange={setText}
+                                onCancel={() => state.onEdit(null)}
+                                onSave={() => saveBullet(b.id, (x) => ((x.text = text), (x.warning = undefined), (x.ambition = undefined)))}
+                                onRemove={() => saveBullet(b.id, (x) => (x.include = false))}
+                              />
+                            ) : (
+                              <Line level={rating.bullets[b.id] ?? 0} picked={picked(b.id)} disabled={!!viewed} warning={b.warning} onPick={() => state.onSelect(b.id)}>
+                                {b.text}
+                              </Line>
+                            )}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                ))}
+            </div>
+          ))}
+      </article>
+      <p className="mt-4 text-center text-[13px] text-muted">
+        {viewed ? "This is how the CV looked then. Restore it to make it the latest version again." : "Click lines to pick them, and the panel on the right suggests prompts for your chat. Highlights are never included in the PDF or DOCX."}
+      </p>
+    </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Ambition: the level the user picks for this application, and how each CV line is rated.
-
+// One colour per ambition level, shared by the line highlights and the legend.
 const HL: Record<Ambition, string> = { 0: "", 1: "bg-[#e3e9ff]", 2: "bg-[#ffecb0]", 3: "bg-[#ffd4cf]" };
 const SWATCH: Record<Ambition, string> = { 0: "bg-white ring-1 ring-[#b9bfc8]", 1: "bg-[#c9d4ff]", 2: "bg-[#ffd966]", 3: "bg-[#ff9f94]" };
 
-const draftPrompt = (role: string, level: Ambition, redraft: boolean) => `${redraft ? "Redraft" : "Draft"} my CV for ${role} in CV Tailor at the ${ambitionName(level)} ambition level.`;
+export const draftPrompt = (role: string, level: Ambition, redraft: boolean) => `${redraft ? "Redraft" : "Draft"} my CV for ${role} in CV Tailor at the ${ambitionName(level)} ambition level.`;
 
-function lineTitle(level: Ambition, chosen: Ambition) {
-  return `${ambitionName(level)}: ${AMBITION[level].line}${level > chosen ? ` (above the ${ambitionName(chosen)} level you chose)` : ""}`;
+function Rated({ level, children }: { level: Ambition; children: React.ReactNode }) {
+  if (!level) return <>{children}</>;
+  return <span className={cx("rounded-[3px] px-[2px] [box-decoration-break:clone] [-webkit-box-decoration-break:clone]", HL[level])}>{children}</span>;
 }
 
-function Rated({ level, above, on, children }: { level: Ambition; above: boolean; on: boolean; children: React.ReactNode }) {
-  if (!on || (!level && !above)) return <>{children}</>;
-  return <span className={cx("rounded-[3px] px-[2px] [box-decoration-break:clone] [-webkit-box-decoration-break:clone]", HL[level], above && "outline-[1.5px] outline-offset-1 outline-[#b42318] outline-dashed")}>{children}</span>;
-}
-
-function AmbitionPicker({ data, update, role, step }: { data: AppData; update: (d: AppData) => void; role: string; step?: number }) {
-  const { job, cv } = data;
-  const level = job.ambition;
-  const stale = cv && cv.ambition !== undefined && cv.ambition !== level;
-  const latest = useRef(0);
-
-  // It's only a setting: show the new level at once and save in the background,
-  // putting the old one back if the save fails.
-  async function choose(next: Ambition) {
-    if (next === level) return;
-    const request = ++latest.current;
-    update({ ...data, job: { ...job, ambition: next } });
-    try {
-      await api(`/api/applications/${job.id}`, { method: "PATCH", body: { ambition: next } });
-    } catch (e) {
-      if (request === latest.current) update({ ...data, job: { ...job, ambition: level } });
-      toastError(e);
-    }
-  }
-
+/** A CV line you can pick for the chat. */
+function Line({ level, picked, disabled, warning, onPick, children }: { level: Ambition; picked: boolean; disabled: boolean; warning?: string; onPick: () => void; children: React.ReactNode }) {
   return (
-    <section aria-labelledby="ambition-h" className="flex flex-col gap-2.5 border-b border-line-soft bg-surface px-7 py-4">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-        <h2 id="ambition-h" className="text-sm font-semibold">
-          {step ? `${step}. Choose the ambition` : "Ambition"}
-        </h2>
-        <div role="radiogroup" aria-labelledby="ambition-h" className="flex flex-wrap gap-1 rounded-[10px] bg-paper p-1">
+    <button
+      type="button"
+      aria-pressed={picked}
+      disabled={disabled}
+      title={[`${ambitionName(level)}: ${AMBITION[level].line}`, warning].filter(Boolean).join("\n")}
+      onClick={onPick}
+      className={cx("flex-1 rounded-[3px] text-left disabled:cursor-default", picked ? "outline-2 outline-offset-2 outline-accent" : !disabled && "hover:outline hover:outline-1 hover:outline-offset-2 hover:outline-[#9fb0f5]")}
+    >
+      <Rated level={level}>{children}</Rated>
+    </button>
+  );
+}
+
+/** Choose how far the CV may stretch the profile. Saved in the background; the old level comes back if that fails. */
+export async function chooseAmbition(data: AppData, update: (d: AppData) => void, next: Ambition) {
+  const level = data.job.ambition;
+  if (next === level) return;
+  update({ ...data, job: { ...data.job, ambition: next } });
+  try {
+    await api(`/api/applications/${data.job.id}`, { method: "PATCH", body: { ambition: next } });
+  } catch (e) {
+    update({ ...data, job: { ...data.job, ambition: level } });
+    toastError(e);
+  }
+}
+
+/** Before there's a CV: pick the ambition, then copy the prompt that asks the chat to draft it. */
+function DraftCard({ data, update, role }: { data: AppData; update: (d: AppData) => void; role: string }) {
+  const level = data.job.ambition;
+  return (
+    <DocBody>
+      <section className="flex flex-col gap-4 rounded-2xl bg-surface px-7 py-7 shadow-[0_1px_2px_rgba(14,17,22,0.08),0_8px_24px_rgba(14,17,22,0.08)]">
+        <h2 className="text-[22px] font-semibold tracking-tight">Draft your CV for this job</h2>
+        <p className="text-[15px] leading-relaxed text-ink-2">Pick how far the CV may stretch your profile. Your chat writes to that level and rates every line, so you can see what to prepare for in an interview.</p>
+        <div role="radiogroup" aria-label="Ambition" className="flex flex-col gap-2">
           {AMBITION.map((a) => (
             <button
               key={a.level}
               type="button"
               role="radio"
               aria-checked={a.level === level}
-              onClick={() => choose(a.level)}
-              className={cx("flex min-h-9 items-center gap-2 rounded-[7px] px-3 text-sm font-medium", a.level === level ? "bg-surface text-ink shadow-[0_1px_2px_rgba(14,17,22,0.12)]" : "text-ink-2 hover:text-ink")}
+              onClick={() => chooseAmbition(data, update, a.level)}
+              className={cx("flex items-start gap-3 rounded-xl border-[1.5px] px-4 py-3 text-left", a.level === level ? "border-accent bg-accent-soft" : "border-line hover:border-control")}
             >
-              <span aria-hidden="true" className={cx("size-2.5 rounded-full", SWATCH[a.level])} />
-              {a.name}
+              <span aria-hidden="true" className={cx("mt-1 size-4 shrink-0 rounded", SWATCH[a.level])} />
+              <span className="flex flex-col">
+                <span className="text-[15px] font-semibold">{a.name}</span>
+                <span className="text-sm text-muted">{a.line}</span>
+              </span>
             </button>
           ))}
         </div>
-        <span className="flex-1" />
-        {cv && (
-          <Button size="sm" variant={stale ? "primary" : "ghost"} onClick={() => copyText(draftPrompt(role, level, true), "Prompt copied")}>
-            Copy redraft prompt
-          </Button>
-        )}
-      </div>
-      <p className="text-sm leading-relaxed text-ink-2">
-        {AMBITION[level].setting}
-        {stale && <span className="text-warn-ink"> This CV was written at {ambitionName(cv.ambition!)}, so ask your chat to redraft it.</span>}
-      </p>
-    </section>
+        <Button variant="primary" className="h-12 text-[15px]" onClick={() => copyText(draftPrompt(role, level, false), "Prompt copied")}>
+          Copy the prompt for your chat
+        </Button>
+        <p className="text-[13px] leading-relaxed text-muted">Paste it into your chat. The draft appears here as version 1, and in Activity on the right.</p>
+      </section>
+    </DocBody>
   );
 }
 
-function AmbitionLegend({ counts, chosen, highlights, onToggle, anyAbove }: { counts: number[]; chosen: Ambition; highlights: boolean; onToggle: () => void; anyAbove: boolean }) {
+/** The bar above the CV: what each highlight colour means, the ATS score, and export. */
+function CvStrip({ counts, ats, cvId }: { counts: number[]; ats: AtsReport | null; cvId: string }) {
+  const [open, setOpen] = useState<"ats" | "export" | null>(null);
+  // The ATS breakdown and export menu close on Escape or a click elsewhere.
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => !ref.current?.contains(e.target as Node) && setOpen(null);
+    const escape = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [open]);
+  const band = !ats ? "" : ats.score >= 85 ? "bg-[#dcf2e4] text-[#14593a]" : ats.score >= 70 ? "bg-[#fff0c2] text-[#6b4300]" : "bg-danger-soft text-[#8a1c10]";
   return (
-    <section aria-label="Ambition legend" className="w-full max-w-[720px] rounded-xl bg-surface px-5 py-3.5 shadow-[0_1px_2px_rgba(14,17,22,0.06)]">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <p className="flex-1 text-[13px] font-medium text-ink-2">Each line is highlighted by how far it goes beyond your profile</p>
-        <button type="button" role="switch" aria-checked={highlights} onClick={onToggle} className="min-h-8 text-[13px] font-medium text-accent">
-          {highlights ? "Hide highlights" : "Show highlights"}
-        </button>
-      </div>
-      <ul className="mt-2 grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2">
+    <div ref={ref} className="relative flex w-full max-w-[720px] flex-wrap items-center gap-1 rounded-xl bg-surface p-1.5 shadow-[0_1px_2px_rgba(14,17,22,0.08),0_6px_20px_rgba(14,17,22,0.12)]">
+      <ul aria-label="Highlight colours" className="flex flex-1 flex-wrap items-center gap-x-[18px] gap-y-1 px-2">
         {AMBITION.map((a) => (
-          <li key={a.level} className={cx("flex items-start gap-2 text-[13px] leading-snug", a.level > chosen && !counts[a.level] && "opacity-50")}>
-            <span aria-hidden="true" className={cx("mt-[3px] size-3 shrink-0 rounded-[3px]", SWATCH[a.level])} />
-            <span>
-              <span className="font-semibold">{a.name}</span> <span className="font-mono text-xs text-muted">{counts[a.level]}</span>
-              <span className="block text-muted">{a.line}</span>
-            </span>
+          <li key={a.level} title={a.line} className="flex items-center gap-[7px] text-[13px] whitespace-nowrap">
+            <span aria-hidden="true" className={cx("size-3.5 rounded", SWATCH[a.level])} />
+            <span className="font-medium">{a.name}</span>
+            <span className="font-mono text-[11.5px] text-muted">{counts[a.level]}</span>
           </li>
         ))}
       </ul>
-      {anyAbove && highlights && (
-        <p className="mt-2 flex items-center gap-2 text-[13px] text-ink-2">
-          <span aria-hidden="true" className="h-3 w-5 shrink-0 rounded-[3px] outline-[1.5px] outline-[#b42318] outline-dashed" />
-          Dashed outline: above the {ambitionName(chosen)} level you chose for this application
-        </p>
+      {ats && (
+        <button type="button" aria-expanded={open === "ats"} onClick={() => setOpen(open === "ats" ? null : "ats")} className="flex h-9 items-center gap-2 rounded-[9px] pr-1.5 pl-2.5 hover:bg-paper">
+          <span className="text-[13px] font-medium text-muted">ATS</span>
+          <span className={cx("grid h-[26px] min-w-[34px] place-items-center rounded-[7px] px-1.5 text-[15px] font-bold", band)}>{ats.score}</span>
+        </button>
       )}
-    </section>
+      <div className="relative">
+        <button type="button" aria-expanded={open === "export"} onClick={() => setOpen(open === "export" ? null : "export")} className="flex h-9 items-center gap-1.5 rounded-[9px] border border-control bg-surface pr-2.5 pl-3 text-[13.5px] font-medium hover:border-muted">
+          Export
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 5.5 7 9.5 11 5.5" />
+          </svg>
+        </button>
+        {open === "export" && (
+          <div className="absolute top-[46px] right-0 z-20 flex w-[210px] flex-col gap-0.5 rounded-xl bg-surface p-1.5 shadow-[0_1px_2px_rgba(14,17,22,0.08),0_10px_28px_rgba(14,17,22,0.16)]">
+            <a href={`/api/cvs/${cvId}/export?format=pdf`} onClick={() => setOpen(null)} className="flex h-9 items-center justify-between rounded-lg px-2.5 text-sm hover:bg-paper">
+              PDF <span className="text-[12.5px] text-muted">1 page</span>
+            </a>
+            <a href={`/api/cvs/${cvId}/export?format=docx`} onClick={() => setOpen(null)} className="flex h-9 items-center justify-between rounded-lg px-2.5 text-sm hover:bg-paper">
+              Word (DOCX) <span className="text-[12.5px] text-muted">ATS-friendly</span>
+            </a>
+          </div>
+        )}
+      </div>
+      {open === "ats" && ats && (
+        <div role="dialog" aria-label="ATS score" className="absolute top-[58px] right-0 z-20 flex w-[360px] max-w-full flex-col gap-3 rounded-[14px] bg-surface p-4 shadow-[0_1px_2px_rgba(14,17,22,0.08),0_14px_36px_rgba(14,17,22,0.2)]">
+          <div className="flex items-center gap-3">
+            <span className={cx("grid h-10 w-12 shrink-0 place-items-center rounded-[10px] text-[22px] font-bold", band)}>{ats.score}</span>
+            <span>
+              <span className="block text-[15px] font-semibold">ATS score</span>
+              <span className="block text-[13px] text-muted">{ats.score >= 85 ? "Strong" : ats.score >= 70 ? "Good, with room to improve" : "Weak"}</span>
+            </span>
+          </div>
+          <p className="text-[13px] leading-relaxed text-ink-2">An estimate of how an applicant tracking system would match this CV to the listing. Keywords count most.</p>
+          <ul>
+            {ats.checks.map((c) => (
+              <li key={c.label} className="flex justify-between gap-3 border-t border-paper py-2 text-[13.5px]">
+                <span className="text-ink-2">{c.label}</span>
+                <span className={cx("text-right font-semibold", c.ok ? "text-[#14593a]" : "text-ink")}>
+                  {c.value} <span className="font-mono text-[11.5px] font-normal text-muted">{c.points}/{c.max}</span>
+                </span>
+              </li>
+            ))}
+            {ats.missing.length > 0 && (
+              <li className="flex justify-between gap-3 border-t border-paper py-2 text-[13.5px]">
+                <span className="text-ink-2">Missing</span>
+                <span className="text-right font-semibold text-[#8a1c10]">{ats.missing.slice(0, 6).join(", ")}</span>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ViewingBanner({ version, onBack, onRestore }: { version: ViewedVersion; onBack: () => void; onRestore: () => void }) {
+  const at = new Date(version.at).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return (
+    <div role="status" className="flex w-full max-w-[720px] flex-wrap items-center gap-2.5 rounded-xl bg-ink py-1.5 pr-1.5 pl-4 text-white shadow-[0_6px_20px_rgba(14,17,22,0.25)]">
+      <span className="text-[13.5px] whitespace-nowrap">
+        Viewing <b className="font-semibold">v{version.n}</b> · {at}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[13px] text-[#c5cad3]">{version.summary}</span>
+      <button type="button" onClick={onRestore} className="h-[34px] rounded-lg bg-white px-3 text-[13px] font-semibold text-ink">
+        Restore v{version.n}
+      </button>
+      <button type="button" onClick={onBack} className="h-[34px] rounded-lg px-2.5 text-[13px] font-medium hover:bg-white/10">
+        Back to latest
+      </button>
+    </div>
   );
 }
 
@@ -554,7 +557,7 @@ function InlineEdit({ value, onChange, onSave, onCancel, onRemove }: { value: st
       <Textarea value={value} onChange={(e) => onChange(e.target.value)} autoFocus className="text-[13px]" />
       <div className="flex gap-2">
         <Button size="sm" variant="primary" onClick={onSave}>
-          Save
+          Save as new version
         </Button>
         <Button size="sm" variant="ghost" onClick={onCancel}>
           Cancel
@@ -621,7 +624,7 @@ function TimelineTab({ data, reload }: { data: AppData; reload: () => void }) {
             <li key={t.status} aria-current={i === current ? "step" : undefined} className="flex flex-col gap-2">
               <span aria-hidden="true" className={cx("h-1.5 rounded-full", i < current || (closed && i <= reached) ? (closed ? "bg-[#8a909a]" : "bg-accent") : i === current ? "bg-ink" : "bg-line")} />
               <span className={cx("text-sm", i <= Math.max(current, reached) ? "font-semibold" : "text-muted")}>{t.label}</span>
-              <span className="font-mono text-xs text-muted">{stageDate(t.status) || " "}</span>
+              <span className="font-mono text-xs text-muted">{stageDate(t.status) || " "}</span>
             </li>
           ))}
         </ol>

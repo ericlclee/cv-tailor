@@ -16,7 +16,7 @@ import { analyzeRequirements, backedCount, requirementKey } from "../requirement
 import { renderCv } from "../render";
 import { profileStrength } from "../strength";
 import { buildCvFromPlan, buzzwords, flagNumbers, nearCopies, rateCv, underpowered, UNLINKED_WARNING } from "../tailor";
-import type { ActivityDetail, AppStatus, CvContent, Entry, ParsedJob } from "../types";
+import type { ActivityDetail, AppStatus, CvBullet, CvContent, Entry, ParsedJob } from "../types";
 import { CURATE, GUIDE_TOPICS, GUIDES, guideText } from "./guide";
 
 // The CV Tailor MCP server. The user's own chat model does the thinking and
@@ -39,7 +39,7 @@ The master profile comes first: every CV can only be as strong as the detail on 
 
 Workflow: get_overview; set up and refine the profile; when the user shares a job, create_application and curate the listing once; close the must-have gaps; agree the ambition level; write the CV with save_cv; tune it with edit_cv; track progress with update_application.
 
-Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it unless the user asks, and rate every line you write 0–3 honestly. Above Faithful, make up the figures for work that wasn't measured, as far as the level allows.
+Ambition: the user decides, per application, how far the CV goes beyond their profile (${AMBITION.map((a) => a.name).join(", ")}; Elevated unless they choose another). Write to that level, never below it and never above it except for up to 3 stretch lines one level up where the profile has evidence and the CV needs them (guide: writing), and rate every line you write 0–3 honestly. Above Faithful, make up the figures for work that wasn't measured, as far as the level allows.
 Hard limits at every level, because they are checked and get offers withdrawn: never invent employers, job titles, dates, degrees or certifications, and never claim a requirement the user marked as not having (mark_not_claimed). Every CV bullet is built in the XYZ format too, and cites the achievement ids it is based on. A CV is one page at most (enforced). Never copy the profile's wording into a CV: rewrite it for the job.
 
 Keep chat replies short and point the user to the web app to see and download results.`;
@@ -94,11 +94,18 @@ function cvWarnings(content: CvContent, unclaimed: string[]) {
   return out;
 }
 
-/** How a CV's lines spread across the levels, and which go above the application's level. */
+// Up to this many bullets may go one level above the chosen level, where the profile has
+// evidence and the CV needs them to be rounded out (the writing guide's stretch lines).
+const STRETCH_LINES = 3;
+
+/** How a CV's lines spread across the levels, which stretch one level up, and which go further than allowed. */
 function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition, m: Master, job: { parsed: ParsedJob; unclaimed: string[] }) {
   const lines = content.sections.flatMap((s) => (s.include ? s.items.flatMap((i) => (i.include ? i.bullets.filter((b) => b.include) : [])) : []));
   const counts = Object.fromEntries(AMBITION.map((a) => [a.name, lines.filter((b) => (rating.bullets[b.id] ?? 0) === a.level).length]));
-  const above = lines.filter((b) => (rating.bullets[b.id] ?? 0) > chosen).map((b) => ({ bulletId: b.id, text: b.text, ambition: ambitionName(rating.bullets[b.id]) }));
+  const raised = lines.filter((b) => (rating.bullets[b.id] ?? 0) > chosen);
+  const stretch = raised.filter((b) => rating.bullets[b.id] === chosen + 1 && b.sourceIds.length).slice(0, STRETCH_LINES);
+  const view = (b: CvBullet) => ({ bulletId: b.id, text: b.text, ambition: ambitionName(rating.bullets[b.id]) });
+  const above = raised.filter((b) => !stretch.includes(b)).map(view);
   if (rating.summary > chosen) above.push({ bulletId: "summary", text: content.summary, ambition: ambitionName(rating.summary) });
   const weak = underpowered(content, rating, chosen, m);
   // At Bold every must-have the user's work touches should be covered.
@@ -110,6 +117,7 @@ function ambitionReport(content: CvContent, rating: CvRating, chosen: Ambition, 
     lines: counts,
     underpowered: weak.length ? weak : undefined,
     uncoveredMustHaves: uncovered.length ? uncovered : undefined,
+    stretchLines: stretch.length ? stretch.map(view) : undefined,
     aboveChosenLevel: above.length ? above : undefined,
     skillsBeyondProfile: Object.keys(rating.skills).length ? Object.keys(rating.skills) : undefined,
   };
@@ -677,7 +685,7 @@ export function createMcpServer() {
         unknownEntryIds: unknown.length ? unknown : undefined,
         cv: cvView(content, rateCv(content, m)),
         links: { view: appLink(job.id, "cv"), pdf: `${appUrl()}/api/cvs/${cvId}/export?format=pdf`, docx: `${appUrl()}/api/cvs/${cvId}/export?format=docx` },
-        tellTheUser: `${ambition.underpowered || ambition.uncoveredMustHaves || copied.length || filler.length ? `Before showing the user, fix with edit_cv (get_guide 'tuning' explains each check): ${[ambition.underpowered && `${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""} (raise each to ${ambition.chosen}: ${ambition.required})`, ambition.uncoveredMustHaves && `must-haves not covered yet: ${ambition.uncoveredMustHaves.join(", ")} (add a line for each the user's work touches; ask the user about the rest)`, copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? "Some lines are above the chosen level: tone them down with edit_cv, or tell the user and ask. " : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
+        tellTheUser: `${ambition.underpowered || ambition.uncoveredMustHaves || copied.length || filler.length ? `Before showing the user, fix with edit_cv (get_guide 'tuning' explains each check): ${[ambition.underpowered && `${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""} (raise each to ${ambition.chosen}: ${ambition.required})`, ambition.uncoveredMustHaves && `must-haves not covered yet: ${ambition.uncoveredMustHaves.join(", ")} (add a line for each the user's work touches; ask the user about the rest)`, copied.length && `${copied.length} line${copied.length > 1 ? "s" : ""} still in the profile's own wording (reframe for this job)`, filler.length && `${filler.length} line${filler.length > 1 ? "s" : ""} with buzzword filler (say it plainly)`].filter(Boolean).join("; ")}. ` : ""}${ambition.aboveChosenLevel ? `Some lines go further than the allowed stretch (more than one level above ${ambition.chosen}, more than ${STRETCH_LINES} stretch lines, or the summary): tone them down with edit_cv, or tell the user and ask. ` : ""}${ambition.stretchLines ? `Tell the user which line${ambition.stretchLines.length > 1 ? "s stretch" : " stretches"} one level above ${ambition.chosen} to round out the CV, and why. ` : ""}${warnings.length ? "Mention the flagged lines briefly so the user can prepare to back them up in an interview. " : ""}Point them to the CV tab, where each line is highlighted by its ambition.`,
       });
     },
   );
@@ -746,7 +754,7 @@ export function createMcpServer() {
       const copied = nearCopies(content, m);
       const filler = buzzwords(content);
       const ambition = ambitionReport(content, rateCv(content, m), job.ambition, m, job);
-      const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler"].filter(Boolean);
+      const toFix = [ambition.underpowered && `raise ${ambition.underpowered.length} underpowered line${ambition.underpowered.length > 1 ? "s" : ""}`, copied.length && "reframe lines still in the profile's wording", filler.length && "remove buzzword filler", ambition.aboveChosenLevel && "tone down lines beyond the allowed stretch"].filter(Boolean);
       return json({ saved: true, applied: details.length, page: pageNote(fit), ambition, copiedFromProfile: copied.length ? copied : undefined, buzzwords: filler.length ? filler : undefined, next: toFix.length ? `Still to fix with edit_cv: ${toFix.join("; ")} (get_guide 'tuning').` : undefined, warnings: cvWarnings(content, job.unclaimed), keywordCoverage: `${keywordReport(cvPlainText(content), job.parsed).score}%`, link: appLink(job.id, "cv") });
     },
   );

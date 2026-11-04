@@ -93,13 +93,19 @@ export function AskChat({ data, update, role, selected, onClear, onEdit, viewing
         <p className="text-[13px] font-semibold text-ink-2">{picked.length ? "Ask your chat about the selection" : "Ask your chat"}</p>
         <label className="flex items-center gap-2 text-[12.5px] text-muted">
           Ambition
-          <select value={level} onChange={(e) => chooseAmbition(data, update, Number(e.target.value) as Ambition)} className="h-[30px] rounded-lg border border-control bg-surface px-2 text-[13px] font-medium text-ink">
-            {AMBITION.map((a) => (
-              <option key={a.level} value={a.level}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+          {/* The browser's own arrow sits off-centre, so it's drawn here instead. */}
+          <span className="relative flex items-center">
+            <select value={level} onChange={(e) => chooseAmbition(data, update, Number(e.target.value) as Ambition)} className="h-[30px] appearance-none rounded-lg border border-control bg-surface pr-7 pl-2.5 text-[13px] font-medium text-ink hover:border-muted">
+              {AMBITION.map((a) => (
+                <option key={a.level} value={a.level}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <svg aria-hidden="true" width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" className="pointer-events-none absolute right-2.5 text-ink">
+              <path d="M3 5.5 7 9.5 11 5.5" />
+            </svg>
+          </span>
         </label>
       </div>
 

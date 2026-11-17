@@ -243,6 +243,9 @@ function CvTab({ data, reload, update, role, state }: { data: AppData; reload: (
   const { cv } = data;
   const [text, setText] = useState("");
   const [editingFor, setEditingFor] = useState<string | null>(null);
+  // Dragging a line within its role: the line being moved, and where it would land.
+  const [drag, setDrag] = useState<{ itemId: string; id: string } | null>(null);
+  const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null);
 
   if (!cv) return <DraftCard data={data} update={update} role={role} />;
 
@@ -269,6 +272,20 @@ function CvTab({ data, reload, update, role, state }: { data: AppData; reload: (
   function saveBullet(bulletId: string, mutate: (b: CvBullet) => void) {
     const next = structuredClone(cv!.content);
     for (const s of next.sections) for (const i of s.items) for (const b of i.bullets) if (b.id === bulletId) mutate(b);
+    return saveContent(next);
+  }
+  /** Move a line next to another in the same role, showing it at once and saving it as a new version. */
+  function moveBullet(itemId: string, id: string, target: string, after: boolean) {
+    if (id === target) return;
+    const next = structuredClone(cv!.content);
+    for (const s of next.sections)
+      for (const it of s.items) {
+        if (it.id !== itemId) continue;
+        const [moved] = it.bullets.splice(it.bullets.findIndex((b) => b.id === id), 1);
+        it.bullets.splice(it.bullets.findIndex((b) => b.id === target) + (after ? 1 : 0), 0, moved);
+      }
+    if (JSON.stringify(next) === JSON.stringify(cv!.content)) return;
+    update({ ...data, cv: { ...cv!, content: next } });
     return saveContent(next);
   }
 
@@ -339,8 +356,42 @@ function CvTab({ data, reload, update, role, state }: { data: AppData; reload: (
                     <ul className="mt-0.5 flex flex-col gap-px">
                       {it.bullets
                         .filter((b) => b.include)
-                        .map((b) => (
-                          <li key={b.id} className="flex gap-2 pl-1">
+                        .map((b, k, shown) => (
+                          <li
+                            key={b.id}
+                            className={cx("group relative flex gap-2 pl-1", drag?.id === b.id && "opacity-40")}
+                            onDragOver={(e) => {
+                              if (drag?.itemId !== it.id) return;
+                              e.preventDefault();
+                              const r = e.currentTarget.getBoundingClientRect();
+                              const after = e.clientY > r.top + r.height / 2;
+                              if (drop?.id !== b.id || drop.after !== after) setDrop({ id: b.id, after });
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              if (drag && drop) moveBullet(it.id, drag.id, drop.id, drop.after);
+                              setDrag(null);
+                              setDrop(null);
+                            }}
+                          >
+                            {drop?.id === b.id && drag?.id !== b.id && <span aria-hidden="true" className={cx("pointer-events-none absolute inset-x-0 h-0.5 rounded-sm bg-accent", drop.after ? "-bottom-px" : "-top-px")} />}
+                            {!viewed && editing !== b.id && shown.length > 1 && (
+                              <MoveHandle
+                                onDragStart={(e) => {
+                                  e.dataTransfer.effectAllowed = "move";
+                                  e.dataTransfer.setData("text/plain", b.id);
+                                  const li = e.currentTarget.closest("li");
+                                  if (li) e.dataTransfer.setDragImage(li, 24, 10);
+                                  setDrag({ itemId: it.id, id: b.id });
+                                }}
+                                onDragEnd={() => {
+                                  setDrag(null);
+                                  setDrop(null);
+                                }}
+                                onUp={k > 0 ? () => moveBullet(it.id, b.id, shown[k - 1].id, false) : undefined}
+                                onDown={k < shown.length - 1 ? () => moveBullet(it.id, b.id, shown[k + 1].id, true) : undefined}
+                              />
+                            )}
                             <span aria-hidden="true">•</span>
                             {editing === b.id ? (
                               <InlineEdit
@@ -364,7 +415,7 @@ function CvTab({ data, reload, update, role, state }: { data: AppData; reload: (
           ))}
       </article>
       <p className="mt-4 text-center text-[13px] text-muted">
-        {viewed ? "This is how the CV looked then. Restore it to make it the latest version again." : "Click lines to pick them, and the panel on the right suggests prompts for your chat. Highlights are never included in the PDF or DOCX."}
+        {viewed ? "This is how the CV looked then. Restore it to make it the latest version again." : "Click lines to pick them, and the panel on the right suggests prompts for your chat. Drag the handle beside a line to move it. Highlights are never included in the PDF or DOCX."}
       </p>
     </div>
   );
@@ -393,6 +444,37 @@ function Line({ level, picked, disabled, warning, onPick, children }: { level: A
       className={cx("flex-1 rounded-[3px] text-left disabled:cursor-default", picked ? "outline-2 outline-offset-2 outline-accent" : !disabled && "hover:outline hover:outline-1 hover:outline-offset-2 hover:outline-[#9fb0f5]")}
     >
       <Rated level={level}>{children}</Rated>
+    </button>
+  );
+}
+
+/** The grip beside a CV line: drag it to move the line, or focus it and use the up and down arrows. */
+function MoveHandle({ onDragStart, onDragEnd, onUp, onDown }: { onDragStart: (e: React.DragEvent<HTMLButtonElement>) => void; onDragEnd: () => void; onUp?: () => void; onDown?: () => void }) {
+  return (
+    <button
+      type="button"
+      draggable
+      aria-label="Move line: drag it, or press the up or down arrow"
+      aria-keyshortcuts="ArrowUp ArrowDown"
+      title="Drag to move"
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onKeyDown={(e) => {
+        const move = e.key === "ArrowUp" ? onUp : e.key === "ArrowDown" ? onDown : undefined;
+        if (!move) return;
+        e.preventDefault();
+        move();
+      }}
+      className="absolute top-px -left-6 grid h-[18px] w-5 cursor-grab place-items-center rounded text-[#8a909a] opacity-0 group-hover:opacity-100 hover:bg-paper hover:text-ink focus-visible:opacity-100 active:cursor-grabbing"
+    >
+      <svg aria-hidden="true" width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+        <circle cx="3" cy="3" r="1.3" />
+        <circle cx="7" cy="3" r="1.3" />
+        <circle cx="3" cy="7" r="1.3" />
+        <circle cx="7" cy="7" r="1.3" />
+        <circle cx="3" cy="11" r="1.3" />
+        <circle cx="7" cy="11" r="1.3" />
+      </svg>
     </button>
   );
 }

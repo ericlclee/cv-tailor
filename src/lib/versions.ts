@@ -47,6 +47,20 @@ export function contentChanges(a: CvContent, b: CvContent): ActivityDetail[] {
     else if (old && line.shown && old.text !== line.text) out.push({ label: "Rewrote line", before: old.text, after: line.text });
   }
   for (const [id, old] of was) if (!now.has(id) && old.shown) out.push({ label: "Removed line", before: old.text });
+  // Lines moved within a role: compare the order of the lines that are in both.
+  const order = new Map(a.sections.flatMap((s) => s.items.map((i) => [i.id, i.bullets.filter((x) => x.include).map((x) => x.id)] as const)));
+  for (const s of b.sections)
+    for (const i of s.items) {
+      const ids = i.bullets.filter((x) => x.include).map((x) => x.id);
+      const after = ids.filter((id) => order.get(i.id)?.includes(id));
+      const before = (order.get(i.id) ?? []).filter((id) => ids.includes(id));
+      const k = after.findIndex((id, n) => id !== before[n]);
+      if (k < 0) continue;
+      // The moved line is the one whose removal makes both orders agree.
+      const without = (list: string[], id: string) => list.filter((x) => x !== id).join();
+      const moved = without(after, after[k]) === without(before, after[k]) ? after[k] : before[k];
+      out.push({ label: "Moved line", after: now.get(moved)?.text });
+    }
   return out;
 }
 
@@ -58,7 +72,7 @@ export async function editCv(cvId: string, change: { name: string; content: CvCo
   if (!details.length && change.name === cv.name) return cv;
   const t = tracker();
   await t.doc("cvs", cv.id);
-  const ONE: Record<string, string> = { Summary: "Edited the summary", Headline: "Edited the headline", "Added line": "Added a line", "Removed line": "Removed a line", "Rewrote line": "Edited a line" };
+  const ONE: Record<string, string> = { Summary: "Edited the summary", Headline: "Edited the headline", "Added line": "Added a line", "Removed line": "Removed a line", "Rewrote line": "Edited a line", "Moved line": "Moved a line" };
   const summary = details.length === 1 ? ONE[details[0].label] : details.length ? `Made ${details.length} changes` : "Renamed the CV";
   const saved = await saveCv({ ...cv, ...change, updatedAt: new Date().toISOString() }, { source: "web", summary }, cv);
   await t.record({ source: "web", kind: "cv", summary, appId: cv.jobId, details, cvVersion: saved.version });
